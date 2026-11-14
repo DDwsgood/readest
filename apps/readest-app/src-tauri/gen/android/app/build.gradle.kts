@@ -17,7 +17,7 @@ val tauriProperties = Properties().apply {
 
 android {
     compileSdk = 36
-    namespace = "com.bilingify.readest"
+    namespace = "io.github.ddwsgood.readest"
     if (project.findProperty("penFlavor") == "booxPen") {
         // The BOOX Pen SDK and its mmkv dependency both bundle libc++_shared.
         packaging.jniLibs.pickFirsts.add("lib/*/libc++_shared.so")
@@ -47,7 +47,7 @@ android {
                         ?.substringAfter("=")?.trim()?.trim('"', '\'')?.takeIf { it.isNotEmpty() }
                 }
             ?: ""
-        applicationId = "com.bilingify.readest"
+        applicationId = "io.github.ddwsgood.readest"
         minSdk = 26
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

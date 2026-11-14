@@ -3,6 +3,7 @@ import { useSidebarStore } from '@/store/sidebarStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookProgressValue } from '@/store/readerProgressStore';
 import { createCfiLocationMatcher } from '@/utils/cfi';
+import { clearViewSearchHighlights } from '@/utils/searchConfig';
 import { flattenSearchResults } from '../components/sidebar/SearchResultsNav';
 
 export function useSearchNav(bookKey: string) {
@@ -86,7 +87,7 @@ export function useSearchNav(bookKey: string) {
     // Exit the sidebar's search mode too, not just the results — otherwise
     // reopening the sidebar still shows the (empty) search bar.
     setSearchBarVisible(false);
-    getView(bookKey)?.clearSearch();
+    clearViewSearchHighlights(getView(bookKey));
   }, [clearSearch, bookKey, getView, setSearchBarVisible]);
 
   // Navigate to the previous page with results (last result before current page)

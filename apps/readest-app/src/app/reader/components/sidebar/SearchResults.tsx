@@ -276,30 +276,46 @@ interface SearchResultsProps {
 const SearchResults: React.FC<SearchResultsProps> = ({ bookKey, results, onSelectResult }) => {
   const _ = useTranslation();
   const getView = useReaderStore((s) => s.getView);
-  const { getSearchNavState } = useSidebarStore();
+  const { getSearchNavState, setSearchCollapsedSections } = useSidebarStore();
   // Reactive subscription: the highlight must track page turns even when the
   // sidebar store is quiet (a page with no search hits never bumps
   // searchResultIndex). See readerProgressStore for why this is a dedicated
   // store instead of readerStore.
   const progress = useBookProgress(bookKey);
-  const { searchProgress, searchError } = getSearchNavState(bookKey);
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(() => new Set());
+  const navState = getSearchNavState(bookKey);
+  const { searchProgress, searchError } = navState;
+  const [localCollapsedSections, setLocalCollapsedSections] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const collapsedSections = useMemo(
+    () =>
+      navState.collapsedSections ? new Set(navState.collapsedSections) : localCollapsedSections,
+    [navState.collapsedSections, localCollapsedSections],
+  );
 
   // Starting a search resets progress to 0 while the previous results stay
   // mounted until the first new hit arrives. Sections are keyed by index+label,
   // so a reused key would otherwise come back collapsed for results the reader
   // has never seen.
   useEffect(() => {
-    if (searchProgress === 0) setCollapsedSections(new Set());
-  }, [searchProgress]);
+    if (searchProgress === 0) {
+      setLocalCollapsedSections(new Set());
+      setSearchCollapsedSections?.(bookKey, []);
+    }
+  }, [searchProgress, bookKey, setSearchCollapsedSections]);
 
-  const toggleSection = useCallback((sectionKey: string) => {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev);
+  const toggleSection = useCallback(
+    (sectionKey: string) => {
+      const next = new Set(collapsedSections);
       if (!next.delete(sectionKey)) next.add(sectionKey);
-      return next;
-    });
-  }, []);
+      if (setSearchCollapsedSections && navState.collapsedSections) {
+        setSearchCollapsedSections(bookKey, [...next]);
+      } else {
+        setLocalCollapsedSections(next);
+      }
+    },
+    [collapsedSections, setSearchCollapsedSections, navState.collapsedSections, bookKey],
+  );
 
   const allCfis = useMemo(() => {
     const cfis: string[] = [];

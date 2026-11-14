@@ -8,6 +8,8 @@ const bookDoc = { sections: [], rendition: {} } as unknown as BookDoc;
 
 // ---------- Shared mutable test state (captured by the mock factories) ----------
 let scrollToIndexSpy: Mock<(arg: unknown) => void>;
+let scrollerElement: HTMLElement;
+let capturedOnScroll: (() => void) | undefined;
 // Only the FIRST (mount-time) `initialized` callback is captured, mirroring how
 // OverlayScrollbars binds its event handlers when it initializes the viewport.
 // A fix that relied on a fresher render closure would pass against the latest
@@ -55,16 +57,27 @@ vi.mock('react-virtuoso', async () => {
   return {
     Virtuoso: ReactMod.forwardRef(
       (
-        props: { scrollerRef?: (el: HTMLElement | Window | null) => void },
+        props: {
+          scrollerRef?: (el: HTMLElement | Window | null) => void;
+          onScroll?: () => void;
+        },
         ref: React.Ref<unknown>,
       ) => {
+        const elementRef = ReactMod.useRef<HTMLDivElement>(null);
         ReactMod.useImperativeHandle(ref, () => ({
           scrollToIndex: (arg: unknown) => scrollToIndexSpy(arg),
         }));
+        capturedOnScroll = props.onScroll;
         ReactMod.useEffect(() => {
-          props.scrollerRef?.(document.createElement('div'));
+          scrollerElement = elementRef.current!;
+          props.scrollerRef?.(scrollerElement);
         }, []);
-        return null;
+        return (
+          <>
+            <div ref={elementRef} />
+            <div data-testid='toc-scrollbar' />
+          </>
+        );
       },
     ),
   };
@@ -111,6 +124,7 @@ const fireOverlayScrollbarsInitialized = () => {
 beforeEach(() => {
   scrollToIndexSpy = vi.fn<(arg: unknown) => void>();
   capturedInitialized = undefined;
+  capturedOnScroll = undefined;
   clearBookProgress('book1');
   // Run rAF synchronously so the callback's scroll happens inside act().
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
@@ -163,6 +177,52 @@ describe('TOCView — OverlayScrollbars init does not rewind the TOC to the top'
 });
 
 describe('TOCView follows the reading position', () => {
+  it('keeps following progress after a programmatic initialization scroll', () => {
+    const toc = makeFlatToc(40);
+    setProgress({ sectionHref: 'ch1.html', location: 'epubcfi(/6/4!/4/1:0)' });
+    render(<TOCView bookKey='book1' bookDoc={bookDoc} toc={toc} />);
+    fireOverlayScrollbarsInitialized();
+
+    // Wrapping/measuring the scroller emits scroll without a reader gesture.
+    act(() => capturedOnScroll?.());
+    scrollToIndexSpy.mockClear();
+    setProgress({ sectionHref: 'ch30.html', location: 'epubcfi(/6/62!/4/1:0)' });
+
+    expect(scrollToIndexSpy).toHaveBeenCalledWith(expect.objectContaining({ index: 30 }));
+  });
+
+  it('does not override a reader scrolling the chapter list', () => {
+    const toc = makeFlatToc(40);
+    setProgress({ sectionHref: 'ch1.html', location: 'epubcfi(/6/4!/4/1:0)' });
+    render(<TOCView bookKey='book1' bookDoc={bookDoc} toc={toc} />);
+    fireOverlayScrollbarsInitialized();
+
+    act(() => {
+      scrollerElement.dispatchEvent(new Event('wheel'));
+      capturedOnScroll?.();
+    });
+    scrollToIndexSpy.mockClear();
+    setProgress({ sectionHref: 'ch30.html', location: 'epubcfi(/6/62!/4/1:0)' });
+
+    expect(scrollToIndexSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not override a reader dragging a scrollbar outside the viewport', () => {
+    const toc = makeFlatToc(40);
+    setProgress({ sectionHref: 'ch1.html', location: 'epubcfi(/6/4!/4/1:0)' });
+    const { getByTestId } = render(<TOCView bookKey='book1' bookDoc={bookDoc} toc={toc} />);
+    fireOverlayScrollbarsInitialized();
+
+    act(() => {
+      getByTestId('toc-scrollbar').dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      capturedOnScroll?.();
+    });
+    scrollToIndexSpy.mockClear();
+    setProgress({ sectionHref: 'ch30.html', location: 'epubcfi(/6/62!/4/1:0)' });
+
+    expect(scrollToIndexSpy).not.toHaveBeenCalled();
+  });
+
   it('scrolls to the new chapter when progress changes with no parent re-render', () => {
     const toc = makeFlatToc(8);
     setProgress({ sectionHref: 'ch1.html', location: 'epubcfi(/6/4!/4/1:0)' });

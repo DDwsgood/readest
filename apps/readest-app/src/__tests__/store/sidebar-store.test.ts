@@ -2,6 +2,7 @@
 import { describe, test, expect, beforeEach } from 'vitest';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { BookNote, BookNoteType, BookSearchResult } from '@/types/book';
+import { buildBookSearchKey } from '@/utils/searchConfig';
 
 beforeEach(() => {
   useSidebarStore.setState({
@@ -12,6 +13,7 @@ beforeEach(() => {
     searchNavStates: {},
     booknotesNavStates: {},
     searchStatuses: {},
+    recentSearchCaches: {},
   });
 });
 
@@ -333,6 +335,93 @@ describe('sidebarStore', () => {
 
       expect(useSidebarStore.getState().getSearchStatus('book1')).toBe('searching');
       expect(useSidebarStore.getState().getSearchStatus('book2')).toBe('completed');
+    });
+  });
+
+  // ── Recent 3 search results LRU cache ────────────────────────────
+  describe('recentSearchCaches (3-entry LRU)', () => {
+    const baseConfig = {
+      scope: 'book' as const,
+      mode: 'contains' as const,
+      matchCase: false,
+      matchDiacritics: false,
+      matchWholeWords: false,
+    };
+
+    const makeEntry = (term: string) => ({
+      searchKey: buildBookSearchKey(term, baseConfig),
+      term,
+      config: baseConfig,
+      results: [
+        {
+          label: 'Ch1',
+          subitems: [{ cfi: `cfi-${term}`, excerpt: { pre: '', match: term, post: '' } }],
+        },
+      ],
+      matchCount: 1,
+      collapsedSections: [] as string[],
+    });
+
+    test('retains at most 3 entries per bookHash and evicts least-recently-used', () => {
+      const store = useSidebarStore.getState();
+      store.putCachedSearch('hash1', makeEntry('one'));
+      store.putCachedSearch('hash1', makeEntry('two'));
+      store.putCachedSearch('hash1', makeEntry('three'));
+
+      expect(
+        useSidebarStore
+          .getState()
+          .getCachedSearches('hash1')
+          .map((e) => e.term),
+      ).toEqual(['three', 'two', 'one']);
+
+      // Re-touch 'one' so 'two' becomes least-recently-used
+      store.putCachedSearch('hash1', makeEntry('one'));
+      expect(
+        useSidebarStore
+          .getState()
+          .getCachedSearches('hash1')
+          .map((e) => e.term),
+      ).toEqual(['one', 'three', 'two']);
+
+      // Adding a 4th entry evicts 'two'
+      store.putCachedSearch('hash1', makeEntry('four'));
+      expect(
+        useSidebarStore
+          .getState()
+          .getCachedSearches('hash1')
+          .map((e) => e.term),
+      ).toEqual(['four', 'one', 'three']);
+      expect(
+        useSidebarStore.getState().getCachedSearch('hash1', makeEntry('two').searchKey),
+      ).toBeNull();
+    });
+
+    test('preserves recentSearchCaches across clearSearch and syncs collapsedSections', () => {
+      const entry = makeEntry('alice');
+      const store = useSidebarStore.getState();
+      store.putCachedSearch('hash1', entry);
+      store.setActiveSearchKey('hash1-pane1', entry.searchKey);
+      store.setSearchCollapsedSections('hash1-pane1', ['0-Ch1']);
+
+      expect(useSidebarStore.getState().getSearchNavState('hash1-pane1').collapsedSections).toEqual(
+        ['0-Ch1'],
+      );
+      expect(
+        useSidebarStore.getState().getCachedSearch('hash1', entry.searchKey)?.collapsedSections,
+      ).toEqual(['0-Ch1']);
+
+      store.clearSearch('hash1-pane1');
+      expect(
+        useSidebarStore.getState().getSearchNavState('hash1-pane1').activeSearchKey,
+      ).toBeNull();
+      expect(useSidebarStore.getState().getSearchNavState('hash1-pane1').collapsedSections).toEqual(
+        [],
+      );
+      expect(useSidebarStore.getState().getCachedSearches('hash1')).toHaveLength(1);
+
+      store.clearCachedSearches('hash1');
+      expect(useSidebarStore.getState().getCachedSearches('hash1')).toEqual([]);
     });
   });
 });

@@ -399,6 +399,9 @@ export const UpdaterContent = ({
       setOldVersion(lastVersion);
     }
     if (!checkUpdate) {
+      if (latestVersion) {
+        setLastShownReleaseNotesVersion(latestVersion);
+      }
       setUpdate({
         currentVersion,
         version: latestVersion,
@@ -462,7 +465,9 @@ export const UpdaterContent = ({
       }
 
       setChangelogs(changelogs);
-      setLastShownReleaseNotesVersion(newVersion);
+      if (update.version) {
+        setLastShownReleaseNotesVersion(update.version);
+      }
     };
     if (update) {
       updateChangelogs(update);

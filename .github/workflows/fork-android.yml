@@ -1,0 +1,199 @@
+name: Fork Android APK
+
+# Manual, fork-only Android build. Nothing is published: the arm64 release APK
+# is signed with the fork's fixed keystore and uploaded as a workflow artifact
+# next to its SHA256. Package identity (io.github.ddwsgood.readest) comes from
+# the committed Tauri config, not from this workflow.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android-fork:
+    if: github.repository == 'DDwsgood/readest'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: initialize git submodules
+        run: git submodule update --init --recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: setup node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: setup Java
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: setup Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          # The legacy `tools` package (part of the action's default) no longer
+          # exists in the SDK repository and makes sdkmanager fail.
+          packages: 'platform-tools'
+
+      - name: install NDK
+        run: sdkmanager "ndk;28.2.13676358"
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          workspaces: apps/readest-app/src-tauri
+          key: fork-android-arm64-cargo
+
+      - name: create .env.local file for Next.js
+        run: |
+          echo "NEXT_PUBLIC_APP_PLATFORM=tauri" > apps/readest-app/.env.local
+
+      - name: build signed arm64 release APK
+        timeout-minutes: 90
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          FORK_ANDROID_KEYSTORE_BASE64: ${{ secrets.FORK_ANDROID_KEYSTORE_BASE64 }}
+          FORK_ANDROID_KEY_PASSWORD: ${{ secrets.FORK_ANDROID_KEY_PASSWORD }}
+          FORK_ANDROID_KEY_ALIAS: ${{ secrets.FORK_ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          # A fork build must never invent its own key: without every secret the
+          # APK would be signed by whatever `tauri android init` generated.
+          for name in FORK_ANDROID_KEYSTORE_BASE64 FORK_ANDROID_KEY_PASSWORD FORK_ANDROID_KEY_ALIAS; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::missing required repository secret $name"
+              exit 1
+            fi
+          done
+
+          version=$(node -p "require('./apps/readest-app/package.json').version")
+          # Stable fork base well above upstream's semver-derived codes
+          # (major*1e6 + minor*1e3 + patch), incremented per workflow run.
+          version_code=$((50000 + GITHUB_RUN_NUMBER))
+          apk_name="Readest-DDwsgood-${version}-fork${GITHUB_RUN_NUMBER}-arm64.apk"
+          {
+            echo "APP_VERSION=$version"
+            echo "VERSION_CODE=$version_code"
+            echo "FORK_APK=$apk_name"
+          } >> "$GITHUB_ENV"
+
+          umask 077
+          keystore="$RUNNER_TEMP/fork-android.jks"
+          printf '%s' "$FORK_ANDROID_KEYSTORE_BASE64" | base64 -d > "$keystore"
+          test -s "$keystore"
+
+          cd apps/readest-app
+          # Same regenerate/restore flow as release.yml: the tracked files under
+          # gen/android are the fork's customizations (namespace, signing,
+          # manifest), so the scaffolding is rebuilt and then restored over it.
+          rm -rf src-tauri/gen/android
+          pnpm tauri android init
+          pnpm tauri icon ../../data/icons/readest-book.png
+          git restore -- .
+
+          # Tracked build.gradle.kts reads this file and only configures the
+          # release signing config when it exists.
+          {
+            echo "keyAlias=$FORK_ANDROID_KEY_ALIAS"
+            echo "password=$FORK_ANDROID_KEY_PASSWORD"
+            echo "storeFile=$keystore"
+          } > src-tauri/gen/android/keystore.properties
+
+          # tauri android build rewrites app/tauri.properties from the merged
+          # config on every run, which is what build.gradle.kts reads.
+          config="$RUNNER_TEMP/fork-android-config.json"
+          printf '{"bundle":{"android":{"versionCode":%s}}}\n' "$version_code" > "$config"
+
+          pnpm tauri android build --apk --config "$config" -t aarch64
+
+          mkdir -p "$GITHUB_WORKSPACE/fork-out"
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+            "$GITHUB_WORKSPACE/fork-out/$apk_name"
+
+      - name: remove signing material
+        if: always()
+        run: |
+          rm -f apps/readest-app/src-tauri/gen/android/keystore.properties \
+                "$RUNNER_TEMP/fork-android.jks" "$RUNNER_TEMP/fork-android-config.json"
+
+      - name: verify signature, package identity and checksum
+        env:
+          FORK_ANDROID_CERT_SHA256: ${{ vars.FORK_ANDROID_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FORK_ANDROID_CERT_SHA256:-}" ]; then
+            echo "::error::missing required repository variable FORK_ANDROID_CERT_SHA256"
+            exit 1
+          fi
+
+          # AGP provisions build-tools during the build, so resolve them here
+          # instead of pinning a version.
+          build_tools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          cd "$GITHUB_WORKSPACE/fork-out"
+
+          "$build_tools/apksigner" verify --verbose --print-certs "$FORK_APK" > "$RUNNER_TEMP/apksigner.txt"
+          "$build_tools/aapt2" dump badging "$FORK_APK" > "$RUNNER_TEMP/aapt.txt"
+          sha256sum "$FORK_APK" > "$FORK_APK.sha256"
+
+          grep -qx 'Verifies' "$RUNNER_TEMP/apksigner.txt" \
+            || { echo "::error::$FORK_APK is not signed"; exit 1; }
+
+          actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apksigner.txt" \
+            | tr -d ':' | tr 'A-F' 'a-f')
+          expected=$(printf '%s' "$FORK_ANDROID_CERT_SHA256" | tr -d ':' | tr 'A-F' 'a-f')
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::signer SHA-256 $actual does not match pinned $expected"
+            exit 1
+          fi
+
+          package=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" "$RUNNER_TEMP/aapt.txt")
+          code=$(sed -n "s/^package: name='[^']*' versionCode='\([^']*\)'.*/\1/p" "$RUNNER_TEMP/aapt.txt")
+          [ "$package" = "io.github.ddwsgood.readest" ] \
+            || { echo "::error::unexpected package name $package"; exit 1; }
+          [ "$code" = "$VERSION_CODE" ] \
+            || { echo "::error::versionCode $code != $VERSION_CODE"; exit 1; }
+
+          {
+            echo "### Fork Android APK (arm64)"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| package | \`$package\` (independent of upstream) |"
+            echo "| versionName | \`$APP_VERSION\` |"
+            echo "| versionCode | \`$code\` |"
+            echo "| ABI | arm64-v8a only |"
+            echo "| signer cert SHA-256 | \`$actual\` |"
+            echo "| artifact | \`$FORK_APK\` + \`$FORK_APK.sha256\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: upload APK and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: readest-ddwsgood-fork${{ github.run_number }}-arm64
+          path: |
+            fork-out/${{ env.FORK_APK }}
+            fork-out/${{ env.FORK_APK }}.sha256
+          if-no-files-found: error

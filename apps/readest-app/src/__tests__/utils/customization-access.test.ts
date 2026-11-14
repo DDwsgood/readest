@@ -2,6 +2,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { jwtDecode } from 'jwt-decode';
 import {
+  ANKI_REQUIRES_PREMIUM,
+  CUSTOM_SERVICES_REQUIRES_PREMIUM,
   getCustomizationPurchased,
   isAnkiAllowed,
   isCustomizationAllowed,
@@ -86,37 +88,25 @@ describe('isCustomTranslatorAllowed', () => {
     vi.unstubAllEnvs();
   });
 
-  it('allows a subscriber', () => {
+  it('has the client-side paywall disabled so every user can use their own keys', () => {
+    expect(CUSTOM_SERVICES_REQUIRES_PREMIUM).toBe(false);
     expect(isCustomTranslatorAllowed(mockToken({ plan: 'plus' }))).toBe(true);
-  });
-
-  it('allows a free user who bought Full Customization', () => {
     expect(isCustomTranslatorAllowed(mockToken({ customization_purchased: true }))).toBe(true);
-  });
-
-  it('denies a free user and a storage-only buyer', () => {
-    expect(isCustomTranslatorAllowed(mockToken({ plan: 'free' }))).toBe(false);
+    expect(isCustomTranslatorAllowed(mockToken({ plan: 'free' }))).toBe(true);
     expect(
       isCustomTranslatorAllowed(mockToken({ plan: 'free', storage_purchased_bytes: 1e9 })),
-    ).toBe(false);
-  });
-
-  it('denies a signed-out reader', () => {
-    expect(isCustomTranslatorAllowed(null)).toBe(false);
-  });
-
-  it('allows a signed-out reader on a self-hosted deployment', () => {
-    vi.stubEnv('NEXT_PUBLIC_SELF_HOSTED', 'true');
+    ).toBe(true);
     expect(isCustomTranslatorAllowed(null)).toBe(true);
   });
 });
 
 describe('isAnkiAllowed', () => {
-  it('needs a paid plan or the customization purchase', () => {
-    expect(isAnkiAllowed('free', false)).toBe(false);
+  it('has the client-side paywall disabled so every user can export and link Anki', () => {
+    expect(ANKI_REQUIRES_PREMIUM).toBe(false);
+    expect(isAnkiAllowed('free', false)).toBe(true);
     expect(isAnkiAllowed('plus', false)).toBe(true);
     expect(isAnkiAllowed('pro', false)).toBe(true);
     expect(isAnkiAllowed('free', true)).toBe(true);
-    expect(isAnkiAllowed('purchase', false)).toBe(false);
+    expect(isAnkiAllowed('purchase', false)).toBe(true);
   });
 });

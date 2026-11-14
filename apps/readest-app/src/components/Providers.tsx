@@ -2,7 +2,7 @@
 
 import '@/utils/polyfill';
 import i18n from '@/i18n/i18n';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { IconContext } from 'react-icons';
 import { AuthProvider } from '@/context/AuthContext';
 import { useEnv } from '@/context/EnvContext';
@@ -26,8 +26,6 @@ import {
   optInTelemetry,
   optOutTelemetry,
   reconcileTelemetryConsent,
-  rollIntoTelemetryPromptBucket,
-  setTelemetryDecision,
 } from '@/utils/telemetry';
 import { getLibraryViewSettings } from '@/helpers/settings';
 import { SETTINGS_FILENAME } from '@/services/constants';
@@ -40,7 +38,6 @@ import AppLockScreen from '@/components/AppLockScreen';
 import CarMediaLibraryBridge from '@/components/CarMediaLibraryBridge';
 import AppLockDialog from '@/components/settings/AppLockDialog';
 import PassphrasePrompt from '@/components/PassphrasePrompt';
-import TelemetryConsentDialog from '@/components/TelemetryConsentDialog';
 import { upgradeToKeychainIfAvailable } from '@/libs/crypto/passphrase';
 import { cryptoSession } from '@/libs/crypto/session';
 import { useAppLockStore } from '@/store/appLockStore';
@@ -59,16 +56,16 @@ const finalizeTelemetryDecision = ({
   appService,
   settings,
   isNewUser,
-  onShowPrompt,
 }: {
   appService: AppService;
   settings: SystemSettings;
   isNewUser: boolean;
-  onShowPrompt: () => void;
 }) => {
   const existing = getTelemetryDecision();
   if (existing === 'pending') {
-    onShowPrompt();
+    optOutTelemetry();
+    settings.telemetryEnabled = false;
+    void appService.saveSettings(settings);
     return;
   }
   if (existing !== null) {
@@ -96,19 +93,10 @@ const finalizeTelemetryDecision = ({
     return;
   }
 
-  // Brand-new user. Default to opt-out for privacy; ask only the prompt
-  // bucket so the rest get a friction-free first launch.
-  if (rollIntoTelemetryPromptBucket()) {
-    setTelemetryDecision('pending');
-    onShowPrompt();
-  } else {
-    optOutTelemetry();
-    // Persist the off-by-default to the settings file directly. The settings
-    // store isn't seeded yet at this point in boot, so saveSysSettings would
-    // write a malformed partial object — write through appService instead.
-    settings.telemetryEnabled = false;
-    void appService.saveSettings(settings);
-  }
+  // Brand-new user: default silently to opt-out without showing any startup dialog.
+  optOutTelemetry();
+  settings.telemetryEnabled = false;
+  void appService.saveSettings(settings);
 };
 
 const Providers = ({ children }: { children: React.ReactNode }) => {
@@ -122,7 +110,6 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
     initialize: initializeAppLock,
   } = useAppLockStore();
   const iconSize = useDefaultIconSize();
-  const [showTelemetryConsent, setShowTelemetryConsent] = useState(false);
   useSafeAreaInsets(); // Initialize safe area insets
   useSettingsSync(); // Adopt global settings broadcast by other windows (#4580)
 
@@ -176,7 +163,6 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
           appService,
           settings,
           isNewUser: !hadSettingsFile,
-          onShowPrompt: () => setShowTelemetryConsent(true),
         });
         // Consent is final now, so PostHog may start.
         initPostHog();
@@ -276,10 +262,6 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
                   <WindowResizeHandles />
                 </div>
                 <AppLockDialog />
-                <TelemetryConsentDialog
-                  open={showTelemetryConsent}
-                  onClose={() => setShowTelemetryConsent(false)}
-                />
                 {showAppLockScreen && <AppLockScreen />}
                 <WindowOutline />
               </CommandPaletteProvider>

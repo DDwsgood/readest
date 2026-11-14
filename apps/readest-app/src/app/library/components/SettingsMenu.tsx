@@ -6,8 +6,7 @@ import { TbSunMoon } from 'react-icons/tb';
 import { MdCloudSync, MdSync, MdSyncProblem, MdOutlineSensors } from 'react-icons/md';
 
 import { useAppRouter } from '@/hooks/useAppRouter';
-import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
-import { DOWNLOAD_READEST_URL } from '@/services/constants';
+import { isTauriAppPlatform } from '@/services/environment';
 import { setReadingStatsDialogVisible } from '@/components/stats/ReadingStatsDialog';
 import { setVocabularyDialogVisible } from '@/components/vocabulary/VocabularyDialog';
 import { setBackupDialogVisible } from '@/app/library/components/BackupWindow';
@@ -52,7 +51,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
   const router = useAppRouter();
   const { envConfig, appService } = useEnv();
   const { user } = useAuth();
-  const { userProfilePlan, quotas } = useQuotaStats(true);
+  const { quotas } = useQuotaStats(true);
   const { themeMode, setThemeMode } = useThemeStore();
   const { settings, setSettingsDialogOpen } = useSettingsStore();
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(settings.alwaysOnTop);
@@ -107,11 +106,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
     setIsDropdownOpen?.(false);
   };
 
-  const downloadReadest = () => {
-    window.open(DOWNLOAD_READEST_URL, '_blank');
-    setIsDropdownOpen?.(false);
-  };
-
   const handleUserLogin = () => {
     navigateToLogin(router);
     setIsDropdownOpen?.(false);
@@ -159,11 +153,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
     const newValue = !settings.openLastBooks;
     saveSysSettings(envConfig, 'openLastBooks', newValue);
     setIsOpenLastBooks(newValue);
-  };
-
-  const handleUpgrade = () => {
-    navigateToProfile(router);
-    setIsDropdownOpen?.(false);
   };
 
   const handleSetRootDir = () => {
@@ -469,10 +458,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
         </ul>
       </MenuItem>
       <hr aria-hidden='true' className='border-base-200 my-1' />
-      {user && userProfilePlan === 'free' && (
-        <MenuItem label={_('Upgrade to Readest Premium')} onClick={handleUpgrade} />
-      )}
-      {isWebAppPlatform() && <MenuItem label={_('Download Readest')} onClick={downloadReadest} />}
       <MenuItem label={_('About Readest')} onClick={showAboutReadest} />
     </Menu>
   );

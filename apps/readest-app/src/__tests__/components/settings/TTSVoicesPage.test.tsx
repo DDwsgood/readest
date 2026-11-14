@@ -117,13 +117,16 @@ describe('TTSVoicesPage', () => {
     expect(TTSUtils.getDefaultVoice('en')?.voiceId).toBe('en-GB-RyanNeural');
   });
 
-  it('a voice the plan lacks can be previewed but leads to the plans to be chosen', async () => {
+  it('a voice disabled by the server stays disabled in place without upgrade badges or routing', async () => {
     renderPage();
-    fireEvent.click(await screen.findByText('Ethan'));
-    expect(state.push).toHaveBeenCalledWith(expect.stringMatching(/^\/user/));
+    const ethanText = await screen.findByText('Ethan');
+    const ethanButton = ethanText.closest('button')!;
+    expect(ethanButton.disabled).toBe(true);
+    expect(ethanButton.textContent).not.toContain('Pro');
+    expect(screen.queryByLabelText('Preview Ethan')).toBeNull();
+    fireEvent.click(ethanButton);
+    expect(state.push).not.toHaveBeenCalled();
     expect(TTSUtils.getDefaultVoice('en')).toBeNull();
-    fireEvent.click(screen.getByLabelText('Preview Ethan'));
-    await waitFor(() => expect(state.play).toHaveBeenCalled());
   });
 
   it('from the library, a preview reads a sample in the voice’s own language', async () => {

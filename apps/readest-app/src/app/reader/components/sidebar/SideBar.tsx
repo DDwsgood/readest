@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookData, useBookConfig } from '@/store/bookDataStore';
@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { eventDispatcher } from '@/utils/event';
 import { getBookDirFromLanguage } from '@/utils/book';
 import { getPanelHorizontalInsetStyle, getPanelTopInset } from '@/utils/insets';
+import { clearViewSearchHighlights } from '@/utils/searchConfig';
 import { useEnv } from '@/context/EnvContext';
 import { useSwipeToDismiss } from '@/hooks/useSwipeToDismiss';
 import { usePanelResize } from '@/hooks/usePanelResize';
@@ -52,8 +53,19 @@ const SideBar = ({}) => {
     isMobile ? false : settings.globalReadSettings.isSideBarPinned,
   );
 
+  const hideSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPendingHideClear = useCallback(() => {
+    if (hideSearchTimerRef.current !== null) {
+      clearTimeout(hideSearchTimerRef.current);
+      hideSearchTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => cancelPendingHideClear(), [cancelPendingHideClear]);
+
   const onSearchEvent = async (event: CustomEvent) => {
     const { term, bookKey } = event.detail;
+    cancelPendingHideClear();
     setSideBarVisible(true);
     setSideBarBookKey(bookKey);
     setSearchBarVisible(true);
@@ -120,12 +132,15 @@ const SideBar = ({}) => {
     if (isSearchBarVisible) {
       handleHideSearchBar();
     } else {
+      cancelPendingHideClear();
       setSearchBarVisible(true);
     }
   };
 
   const handleShowSearchBar = useCallback(() => {
+    cancelPendingHideClear();
     setTimeout(() => {
+      cancelPendingHideClear();
       setSideBarVisible(true);
       setSearchBarVisible(true);
     }, 100);
@@ -133,11 +148,13 @@ const SideBar = ({}) => {
   }, []);
 
   const handleHideSearchBar = useCallback(() => {
+    cancelPendingHideClear();
     setSearchBarVisible(false);
-    setTimeout(() => {
+    hideSearchTimerRef.current = setTimeout(() => {
+      hideSearchTimerRef.current = null;
       if (sideBarBookKey) clearSearch(sideBarBookKey);
     }, 100);
-    getView(sideBarBookKey)?.clearSearch();
+    clearViewSearchHighlights(getView(sideBarBookKey));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sideBarBookKey, clearSearch]);
 

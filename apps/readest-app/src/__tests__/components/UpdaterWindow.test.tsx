@@ -98,6 +98,7 @@ vi.mock('@/components/Dialog', () => ({
 vi.mock('@/components/Link', () => ({ default: () => null }));
 
 import { UpdaterContent } from '@/components/UpdaterWindow';
+import { setLastShownReleaseNotesVersion } from '@/helpers/updater';
 import { tauriDownload } from '@/utils/transfer';
 import { installPackage } from '@/utils/bridge';
 
@@ -236,5 +237,18 @@ describe('UpdaterContent — auto-translated changelog', () => {
     await waitFor(() => expect(screen.getByText('First feature')).toBeTruthy());
     expect(mockTranslate).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Show original' })).toBeNull();
+  });
+
+  it('records lastShownReleaseNotesVersion immediately on open before slow translation completes', () => {
+    vi.mocked(setLastShownReleaseNotesVersion).mockClear();
+    mockLocale = 'zh-CN';
+    // Translation never resolves before unmount
+    mockTranslate.mockImplementationOnce(() => new Promise(() => {}));
+
+    const { unmount } = render(
+      <UpdaterContent checkUpdate={false} latestVersion='0.11.18' lastVersion='0.11.0' />,
+    );
+    expect(setLastShownReleaseNotesVersion).toHaveBeenCalledWith('0.11.18');
+    unmount();
   });
 });

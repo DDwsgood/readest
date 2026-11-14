@@ -672,28 +672,27 @@ describe('TTSPlayerSheet', () => {
     expect(routerPush).not.toHaveBeenCalled();
   });
 
-  test('offline audio row: a free user sees a Premium badge and is routed to upgrade', () => {
+  test('offline audio row: a free user has no Premium badge and opens the chapters view', () => {
     mockQuota.userProfilePlan = 'free';
     const props = makeProps({ downloads: makeDownloads() });
     render(<TTSPlayerSheet {...props} />);
-    expect(screen.getByText('Premium')).toBeTruthy();
-    expect(screen.getByText('Download chapters for offline playback')).toBeTruthy();
+    expect(screen.queryByText('Premium')).toBeNull();
+    expect(screen.getByText('1 of 1 downloaded')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Offline Audio'));
-    expect(routerPush).toHaveBeenCalledWith(expect.stringMatching(/^\/user\?redirect=/));
-    expect(props.onClose).toHaveBeenCalled();
-    // The premium chapters view must not open for a free user.
-    expect(screen.queryByText('chapters-view')).toBeNull();
+    expect(screen.getByText('chapters-view')).toBeTruthy();
+    expect(routerPush).not.toHaveBeenCalled();
   });
 
-  test('offline audio row: a signed-out user is routed to sign-in', () => {
+  test('offline audio row: a signed-out user has no Premium badge and opens the chapters view', () => {
     mockAuth.user = null;
     mockQuota.userProfilePlan = undefined;
     const props = makeProps({ downloads: makeDownloads() });
     render(<TTSPlayerSheet {...props} />);
-    expect(screen.getByText('Premium')).toBeTruthy();
+    expect(screen.queryByText('Premium')).toBeNull();
+    expect(screen.getByText('1 of 1 downloaded')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Offline Audio'));
-    expect(routerPush).toHaveBeenCalledWith(expect.stringContaining('/auth?redirect='));
-    expect(screen.queryByText('chapters-view')).toBeNull();
+    expect(screen.getByText('chapters-view')).toBeTruthy();
+    expect(routerPush).not.toHaveBeenCalled();
   });
 
   // Books with recorded narration (EPUB 3 Media Overlays) surface the narrator
@@ -749,7 +748,7 @@ describe('TTSPlayerSheet', () => {
     expect(viewSettings['ttsUseNarration']).toBeUndefined();
   });
 
-  test('a voice row names its gender and language, and premium voices the plan', async () => {
+  test('a voice row names its gender and language, omitting plan tier badges on disabled voices', async () => {
     const groups = [
       {
         id: 'readest-tts',
@@ -784,9 +783,9 @@ describe('TTSPlayerSheet', () => {
     fireEvent.click(screen.getByLabelText('Voice'));
     const row = (name: string) => screen.getAllByText(name).at(-1)!.closest('button')!;
     const xiaoyu = await waitFor(() => row('Xiaoyu'));
-    // A locked voice is greyed and badged with the plan that unlocks it.
+    expect(xiaoyu.disabled).toBe(true);
     expect(xiaoyu.innerHTML).toContain('text-base-content/60');
-    expect(xiaoyu.textContent).toContain('Pro');
+    expect(xiaoyu.textContent).not.toContain('Pro');
     const ava = row('Ava');
     expect(ava.textContent).toContain('Female');
     expect(ava.textContent).toMatch(/English \(United States\) · Multilingual/);
@@ -885,7 +884,7 @@ describe('TTSPlayerSheet', () => {
     expect(screen.getByLabelText('Preview Guy')).toBeTruthy();
   });
 
-  test('a Readest voice the plan lacks sends the reader to upgrade', async () => {
+  test('a disabled Readest voice stays disabled in place without upgrade routing', async () => {
     const groups = [
       {
         id: 'readest-tts',
@@ -904,13 +903,15 @@ describe('TTSPlayerSheet', () => {
     const props = makeProps({ onGetVoices: vi.fn().mockResolvedValue(groups) });
     render(<TTSPlayerSheet {...props} />);
     fireEvent.click(screen.getByLabelText('Voice'));
-    fireEvent.click(await waitFor(() => screen.getByText('Clara')));
+    const clara = (await waitFor(() => screen.getByText('Clara'))).closest('button')!;
+    expect(clara.disabled).toBe(true);
+    fireEvent.click(clara);
     expect(props.onSetVoice).not.toHaveBeenCalled();
-    expect(routerPush).toHaveBeenCalledWith(expect.stringMatching(/^\/user\?redirect=/));
-    expect(props.onClose).toHaveBeenCalled();
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(props.onClose).not.toHaveBeenCalled();
   });
 
-  test('a signed-out reader tapping a Readest voice is sent to sign in', async () => {
+  test('a signed-out reader tapping a disabled Readest voice is not routed to sign in', async () => {
     mockAuth.user = null;
     const groups = [
       {
@@ -930,9 +931,11 @@ describe('TTSPlayerSheet', () => {
     const props = makeProps({ onGetVoices: vi.fn().mockResolvedValue(groups) });
     render(<TTSPlayerSheet {...props} />);
     fireEvent.click(screen.getByLabelText('Voice'));
-    fireEvent.click(await waitFor(() => screen.getByText('Heart')));
+    const heart = (await waitFor(() => screen.getByText('Heart'))).closest('button')!;
+    expect(heart.disabled).toBe(true);
+    fireEvent.click(heart);
     expect(props.onSetVoice).not.toHaveBeenCalled();
-    expect(routerPush).toHaveBeenCalledWith(expect.stringMatching(/^\/auth/));
+    expect(routerPush).not.toHaveBeenCalled();
   });
 
   test('reopening the sheet returns to the main view', async () => {

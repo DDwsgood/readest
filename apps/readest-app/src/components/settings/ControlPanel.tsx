@@ -137,7 +137,6 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
     settings.hideBookshelfPageButtons,
   );
   const [allowScript, setAllowScript] = useState(viewSettings.allowScript);
-  const [isAutoCheckUpdates, setIsAutoCheckUpdates] = useState(settings.autoCheckUpdates);
   const [isNightlyChannel, setIsNightlyChannel] = useState(settings.updateChannel === 'nightly');
   const [isTelemetryEnabled, setIsTelemetryEnabled] = useState(settings.telemetryEnabled);
 
@@ -212,10 +211,9 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
       true,
     );
     if (appService?.hasUpdater) {
-      const { autoCheckUpdates = true, updateChannel = 'stable' } = DEFAULT_SYSTEM_SETTINGS;
+      const { autoCheckUpdates = false, updateChannel = 'stable' } = DEFAULT_SYSTEM_SETTINGS;
       saveSysSettings(envConfig, 'autoCheckUpdates', autoCheckUpdates);
       saveSysSettings(envConfig, 'updateChannel', updateChannel);
-      setIsAutoCheckUpdates(autoCheckUpdates);
       setIsNightlyChannel(updateChannel === 'nightly');
     }
     pageTurnerResetRef.current();
@@ -477,12 +475,6 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
     saveViewSettings(envConfig, bookKey, 'copyToNotebook', copyToNotebook, false, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyToNotebook]);
-
-  const toggleAutoCheckUpdates = () => {
-    const newValue = !isAutoCheckUpdates;
-    saveSysSettings(envConfig, 'autoCheckUpdates', newValue);
-    setIsAutoCheckUpdates(newValue);
-  };
 
   const toggleNightlyChannel = () => {
     const newValue = !isNightlyChannel;
@@ -840,11 +832,6 @@ const ControlPanel: React.FC<SettingsPanelPanelProp> = ({ bookKey, onRegisterRes
 
       {appService?.hasUpdater && (
         <BoxedList title={_('Update')} data-setting-id='settings.control.checkUpdates'>
-          <SettingsSwitchRow
-            label={_('Check Updates on Start')}
-            checked={isAutoCheckUpdates}
-            onChange={toggleAutoCheckUpdates}
-          />
           <SettingsSwitchRow
             label={_('Nightly Builds')}
             description={isNightlyChannel ? _('Early daily builds') : ''}

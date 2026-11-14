@@ -1,7 +1,24 @@
 import { create } from 'zustand';
-import { BookNote, BookNoteType, BookSearchMatch, BookSearchResult } from '@/types/book';
+import {
+  BookNote,
+  BookNoteType,
+  BookSearchConfig,
+  BookSearchMatch,
+  BookSearchResult,
+} from '@/types/book';
+import { MAX_RECENT_SEARCH_RESULTS } from '@/utils/searchConfig';
 
 type SearchStatus = 'searching' | 'completed' | 'terminated';
+
+export interface CachedBookSearch {
+  searchKey: string;
+  term: string;
+  config: BookSearchConfig;
+  sectionIndex?: number;
+  results: BookSearchResult[] | BookSearchMatch[];
+  matchCount: number;
+  collapsedSections: string[];
+}
 
 // Per-book search navigation state
 interface SearchNavState {
@@ -10,6 +27,9 @@ interface SearchNavState {
   searchResultIndex: number;
   searchProgress: number; // 0 to 1, where 1 means search complete
   searchError: string | null; // invalid regex / nearby-words parse error, shown inline
+  activeSearchKey: string | null;
+  activeReaderSection?: number;
+  collapsedSections: string[];
 }
 
 // Per-book booknotes navigation state
@@ -29,6 +49,8 @@ interface SidebarState {
   searchNavStates: Record<string, SearchNavState>;
   booknotesNavStates: Record<string, BooknotesNavState>;
   searchStatuses: Record<string, SearchStatus>;
+  // Per-bookHash LRU cache of recent completed searches (up to MAX_RECENT_SEARCH_RESULTS)
+  recentSearchCaches: Record<string, CachedBookSearch[]>;
   getIsSideBarVisible: () => boolean;
   getSideBarWidth: () => string;
   setSideBarBookKey: (key: string) => void;
@@ -50,6 +72,12 @@ interface SidebarState {
   setSearchResultIndex: (bookKey: string, index: number) => void;
   setSearchProgress: (bookKey: string, progress: number) => void;
   setSearchError: (bookKey: string, error: string | null) => void;
+  setActiveSearchKey: (bookKey: string, searchKey: string | null, readerSection?: number) => void;
+  setSearchCollapsedSections: (bookKey: string, collapsedSections: string[]) => void;
+  getCachedSearches: (bookHash: string) => CachedBookSearch[];
+  getCachedSearch: (bookHash: string, searchKey: string) => CachedBookSearch | null;
+  putCachedSearch: (bookHash: string, entry: CachedBookSearch) => void;
+  clearCachedSearches: (bookHash: string) => void;
   clearSearch: (bookKey: string) => void;
   // Booknotes navigation actions (per bookKey)
   getBooknotesNavState: (bookKey: string) => BooknotesNavState;
@@ -65,7 +93,12 @@ const defaultSearchNavState: SearchNavState = {
   searchResultIndex: 0,
   searchProgress: 1,
   searchError: null,
+  activeSearchKey: null,
+  activeReaderSection: undefined,
+  collapsedSections: [],
 };
+
+const EMPTY_CACHED_SEARCHES: CachedBookSearch[] = [];
 
 const defaultBooknotesNavState: BooknotesNavState = {
   activeBooknoteType: null,
@@ -83,6 +116,7 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
   searchNavStates: {},
   booknotesNavStates: {},
   searchStatuses: {},
+  recentSearchCaches: {},
   getIsSideBarVisible: () => get().isSideBarVisible,
   getSideBarWidth: () => get().sideBarWidth,
   setSideBarBookKey: (key: string) => set({ sideBarBookKey: key }),
@@ -106,6 +140,7 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
         [bookKey]: {
           ...(state.searchNavStates[bookKey] || defaultSearchNavState),
           searchTerm: term,
+          activeReaderSection: undefined,
         },
       },
     })),
@@ -149,6 +184,76 @@ export const useSidebarStore = create<SidebarState>((set, get) => ({
         },
       },
     })),
+  setActiveSearchKey: (bookKey: string, searchKey: string | null, readerSection?: number) =>
+    set((state) => ({
+      searchNavStates: {
+        ...state.searchNavStates,
+        [bookKey]: {
+          ...(state.searchNavStates[bookKey] || defaultSearchNavState),
+          activeSearchKey: searchKey,
+          activeReaderSection: searchKey ? readerSection : undefined,
+        },
+      },
+    })),
+  setSearchCollapsedSections: (bookKey: string, collapsedSections: string[]) =>
+    set((state) => {
+      const currentNav = state.searchNavStates[bookKey] || defaultSearchNavState;
+      const bookHash = bookKey.split('-')[0]!;
+      const existingCaches = state.recentSearchCaches[bookHash];
+      const nextCaches =
+        currentNav.activeSearchKey && existingCaches?.length
+          ? existingCaches.map((entry) =>
+              entry.searchKey === currentNav.activeSearchKey
+                ? { ...entry, collapsedSections }
+                : entry,
+            )
+          : existingCaches;
+
+      return {
+        searchNavStates: {
+          ...state.searchNavStates,
+          [bookKey]: {
+            ...currentNav,
+            collapsedSections,
+          },
+        },
+        ...(nextCaches
+          ? {
+              recentSearchCaches: {
+                ...state.recentSearchCaches,
+                [bookHash]: nextCaches,
+              },
+            }
+          : {}),
+      };
+    }),
+  getCachedSearches: (bookHash: string) => {
+    return get().recentSearchCaches[bookHash] || EMPTY_CACHED_SEARCHES;
+  },
+  getCachedSearch: (bookHash: string, searchKey: string) => {
+    const list = get().recentSearchCaches[bookHash];
+    if (!list) return null;
+    return list.find((entry) => entry.searchKey === searchKey) || null;
+  },
+  putCachedSearch: (bookHash: string, entry: CachedBookSearch) =>
+    set((state) => {
+      const current = state.recentSearchCaches[bookHash] || EMPTY_CACHED_SEARCHES;
+      const filtered = current.filter((item) => item.searchKey !== entry.searchKey);
+      const updated = [entry, ...filtered].slice(0, MAX_RECENT_SEARCH_RESULTS);
+      return {
+        recentSearchCaches: {
+          ...state.recentSearchCaches,
+          [bookHash]: updated,
+        },
+      };
+    }),
+  clearCachedSearches: (bookHash: string) =>
+    set((state) => {
+      if (!state.recentSearchCaches[bookHash]) return state;
+      const next = { ...state.recentSearchCaches };
+      delete next[bookHash];
+      return { recentSearchCaches: next };
+    }),
   clearSearch: (bookKey: string) =>
     set((state) => ({
       searchNavStates: {

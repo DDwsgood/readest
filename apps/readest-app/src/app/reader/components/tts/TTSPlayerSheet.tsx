@@ -180,11 +180,10 @@ const TTSPlayerSheet = ({
   // download controls. Mirrors the cloud-sync paywall in IntegrationsPanel.
   const { userProfilePlan, customizationPurchased } = useQuotaStats();
   const isDownloadPremium = isTTSCacheAllowed(userProfilePlan ?? 'free', customizationPurchased);
-  // Only badge users who can't use it yet: signed out (known at once), or a
-  // resolved plan without the feature. Suppress it while a signed-in user's
-  // plan is still loading so it never flashes at an entitled user.
+  // Only badge users who can't use it yet: signed out, or a resolved plan
+  // without the feature — never when the feature is already entitled.
   const premiumBadge =
-    !user || (userProfilePlan !== undefined && !isDownloadPremium) ? _('Premium') : undefined;
+    !isDownloadPremium && (!user || userProfilePlan !== undefined) ? _('Premium') : undefined;
 
   // A book can carry a coverImageUrl that no longer resolves (cover never
   // extracted, file pruned). A broken <img> still occupies its h-32 box, so

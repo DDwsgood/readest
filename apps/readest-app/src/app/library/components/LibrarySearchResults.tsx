@@ -46,9 +46,10 @@ const QUERY_LEVEL_CODES = new Set([
   'FUZZY_QUERY_TOO_LONG',
 ]);
 
-// Snapshot of the last completed scan, module-scoped so that opening a result
-// in the reader and navigating back restores the results (and which groups
-// were expanded) instead of rescanning the library.
+// Snapshots of the recent completed scans (LRU, up to 3), module-scoped so
+// opening a result in the reader or switching among recent queries restores the
+// results (and which groups were expanded) instead of rescanning the library.
+const MAX_COMPLETED_SEARCH_SNAPSHOTS = 3;
 interface CompletedSearchSnapshot {
   searchKey: string;
   groups: ResultGroup[];
@@ -57,7 +58,17 @@ interface CompletedSearchSnapshot {
   truncated: boolean;
   expandedBooks: string[];
 }
-let completedSearchSnapshot: CompletedSearchSnapshot | null = null;
+let completedSearchSnapshots: CompletedSearchSnapshot[] = [];
+
+const findCompletedSearchSnapshot = (key: string): CompletedSearchSnapshot | undefined =>
+  completedSearchSnapshots.find((snapshot) => snapshot.searchKey === key);
+
+const putCompletedSearchSnapshot = (snapshot: CompletedSearchSnapshot) => {
+  completedSearchSnapshots = [
+    snapshot,
+    ...completedSearchSnapshots.filter((item) => item.searchKey !== snapshot.searchKey),
+  ].slice(0, MAX_COMPLETED_SEARCH_SNAPSHOTS);
+};
 
 const Emphasis = ({ children }: { children: React.ReactNode }) => (
   <strong className='search-term-highlight'>{children}</strong>
@@ -181,7 +192,7 @@ const LibrarySearchResults = ({
   // timestamp and its recency-sort position, and neither changes what a
   // rescan would find — index staleness is handled per book at search time.
   const booksKey = books
-    .map((book) => book.hash)
+    .map((book) => `${book.hash}:${book.downloadedAt ?? 0}:${book.filePath ?? ''}`)
     .sort()
     .join('|');
   const configKey = [
@@ -196,8 +207,9 @@ const LibrarySearchResults = ({
   useEffect(() => {
     activeSearchKeyRef.current = searchKey;
     controllerRef.current?.abort();
-    const snapshot = completedSearchSnapshot;
-    if (snapshot && snapshot.searchKey === searchKey) {
+    const snapshot = findCompletedSearchSnapshot(searchKey);
+    if (snapshot) {
+      putCompletedSearchSnapshot(snapshot);
       groupsRef.current = snapshot.groups;
       issuesRef.current = snapshot.issues;
       skippedRef.current = snapshot.skipped;
@@ -297,14 +309,14 @@ const LibrarySearchResults = ({
           setActiveBook('');
           setPhase('completed');
           setTruncated(Boolean(event.truncated));
-          completedSearchSnapshot = {
+          putCompletedSearchSnapshot({
             searchKey,
             groups: groupsRef.current,
             issues: issuesRef.current,
             skipped: skippedRef.current,
             truncated: Boolean(event.truncated),
             expandedBooks: [],
-          };
+          });
           if (event.matchCount > 0 && historyRevision === getLibrarySearchHistoryRevision(query)) {
             addLibrarySearchHistory(query);
           }
@@ -343,8 +355,9 @@ const LibrarySearchResults = ({
     setExpandedBooks((current) => {
       const next = new Set(current);
       if (!next.delete(bookHash)) next.add(bookHash);
-      if (completedSearchSnapshot?.searchKey === activeSearchKeyRef.current) {
-        completedSearchSnapshot.expandedBooks = [...next];
+      const activeSnapshot = findCompletedSearchSnapshot(activeSearchKeyRef.current);
+      if (activeSnapshot) {
+        activeSnapshot.expandedBooks = [...next];
       }
       return next;
     });

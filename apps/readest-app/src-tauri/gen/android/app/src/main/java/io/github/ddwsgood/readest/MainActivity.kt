@@ -1,4 +1,4 @@
-package com.bilingify.readest
+package io.github.ddwsgood.readest
 
 import android.os.Build
 import android.os.Bundle

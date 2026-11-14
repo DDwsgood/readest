@@ -244,4 +244,86 @@ describe('LibrarySearchResults', () => {
     render(<LibrarySearchResults {...props} books={[book, imported]} />);
     await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(2));
   });
+
+  it('caches the 3 most recent completed library searches (LRU) and evicts the oldest', async () => {
+    searchMock.mockImplementation((_svc: unknown, _books: unknown, q: string) =>
+      events([
+        {
+          type: 'result',
+          book,
+          result: {
+            index: 0,
+            label: 'Chapter One',
+            subitems: [
+              {
+                locator: { section: 0, start: 0, end: q.length },
+                excerpt: { pre: '', match: q, post: '' },
+              },
+            ],
+          },
+        },
+        { type: 'completed', searchedBooks: 1, skippedBooks: 0, erroredBooks: 0, matchCount: 1 },
+      ]),
+    );
+    const baseProps = {
+      appService: {} as never,
+      books: [book],
+      config,
+      onSelectResult: vi.fn(),
+    };
+
+    const { rerender } = render(<LibrarySearchResults {...baseProps} query='q1' />);
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(1));
+
+    rerender(<LibrarySearchResults {...baseProps} query='q2' />);
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(2));
+
+    rerender(<LibrarySearchResults {...baseProps} query='q3' />);
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(3));
+
+    // Touch q1 from cache -> no rescan, and q2 becomes LRU
+    rerender(<LibrarySearchResults {...baseProps} query='q1' />);
+    await waitFor(() => expect(screen.getByText('1 results')).toBeTruthy());
+    expect(searchMock).toHaveBeenCalledTimes(3);
+
+    // Search q4 -> evicts q2, keeps [q4, q1, q3]
+    rerender(<LibrarySearchResults {...baseProps} query='q4' />);
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(4));
+
+    // q3 is still cached -> no rescan
+    rerender(<LibrarySearchResults {...baseProps} query='q3' />);
+    await waitFor(() => expect(screen.getByText('1 results')).toBeTruthy());
+    expect(searchMock).toHaveBeenCalledTimes(4);
+
+    // q2 was evicted -> triggers scan #5
+    rerender(<LibrarySearchResults {...baseProps} query='q2' />);
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(5));
+  });
+
+  it('invalidates cached library search snapshot when a book is downloaded locally', async () => {
+    const remoteBook: Book = { ...book, hash: 'remote-book', downloadedAt: undefined };
+    searchMock.mockImplementation(() =>
+      events([
+        { type: 'completed', searchedBooks: 1, skippedBooks: 0, erroredBooks: 0, matchCount: 0 },
+      ]),
+    );
+    const baseProps = {
+      appService: {} as never,
+      config,
+      onSelectResult: vi.fn(),
+    };
+
+    const { rerender } = render(
+      <LibrarySearchResults {...baseProps} books={[remoteBook]} query='offline-hit' />,
+    );
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(1));
+
+    // Switch to another query, then mark remoteBook as downloaded and return to 'offline-hit'
+    rerender(<LibrarySearchResults {...baseProps} books={[remoteBook]} query='other' />);
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(2));
+
+    const downloadedBook: Book = { ...remoteBook, downloadedAt: 1700000000 };
+    rerender(<LibrarySearchResults {...baseProps} books={[downloadedBook]} query='offline-hit' />);
+    await waitFor(() => expect(searchMock).toHaveBeenCalledTimes(3));
+  });
 });

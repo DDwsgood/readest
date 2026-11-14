@@ -44,7 +44,8 @@ vi.mock('@/store/bookDataStore', () => ({
   })),
 }));
 
-vi.mock('@/store/readerProgressStore', () => ({
+vi.mock('@/store/readerProgressStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/readerProgressStore')>()),
   getBookProgress: () => mocks.progress,
 }));
 

@@ -43,6 +43,8 @@ Entitlements*.plist
 tauri.*.conf.json
 # tracked exception: the direct-distribution iCloud overlay ships in the repo
 !tauri.macos-nonestore.conf.json
+# Fork Android identity is shared by local builds and CI.
+!tauri.android.conf.json
 
 # vercel
 .vercel

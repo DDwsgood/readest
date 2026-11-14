@@ -169,21 +169,23 @@ const TOCView: React.FC<{
   // Flag real user gestures so onScroll can tell them apart from the synthetic
   // scroll emitted when the current volume auto-expands on open.
   useEffect(() => {
-    if (!scroller) return;
+    const root = osRootRef.current;
+    if (!scroller || !root) return;
     const markUserInput = () => {
       userInputRef.current = true;
     };
     const passiveCapture = { capture: true, passive: true } as const;
     const capture = { capture: true } as const;
-    scroller.addEventListener('wheel', markUserInput, passiveCapture);
-    scroller.addEventListener('touchstart', markUserInput, passiveCapture);
-    scroller.addEventListener('pointerdown', markUserInput, passiveCapture);
-    scroller.addEventListener('keydown', markUserInput, capture);
+    // OverlayScrollbars puts its draggable tracks beside the viewport.
+    root.addEventListener('wheel', markUserInput, passiveCapture);
+    root.addEventListener('touchstart', markUserInput, passiveCapture);
+    root.addEventListener('pointerdown', markUserInput, passiveCapture);
+    root.addEventListener('keydown', markUserInput, capture);
     return () => {
-      scroller.removeEventListener('wheel', markUserInput, passiveCapture);
-      scroller.removeEventListener('touchstart', markUserInput, passiveCapture);
-      scroller.removeEventListener('pointerdown', markUserInput, passiveCapture);
-      scroller.removeEventListener('keydown', markUserInput, capture);
+      root.removeEventListener('wheel', markUserInput, passiveCapture);
+      root.removeEventListener('touchstart', markUserInput, passiveCapture);
+      root.removeEventListener('pointerdown', markUserInput, passiveCapture);
+      root.removeEventListener('keydown', markUserInput, capture);
     };
   }, [scroller]);
 
@@ -279,6 +281,7 @@ const TOCView: React.FC<{
   useEffect(() => {
     if (!isSideBarVisible || sideBarBookKey !== bookKey) {
       userScrolledRef.current = false;
+      userInputRef.current = false;
       pendingScrollRef.current = false;
       initialAutoScrollProcessedRef.current = false;
       return;
@@ -352,19 +355,16 @@ const TOCView: React.FC<{
             visibleCenterRef.current = Math.floor((startIndex + endIndex) / 2);
           }}
           onScroll={() => {
-            // A scroll arriving while a pending auto-scroll is still queued
-            // (idx === -1, waiting on flatItems to expand) normally means the
-            // user is now driving — drop the queued auto-scroll so the next
-            // render doesn't yank them away. But auto-expanding the current
-            // volume on open grows the list and emits a synthetic scroll with
-            // no gesture behind it; ignore that so the initial auto-scroll
-            // survives. A real user scroll still cancels it via userInputRef.
-            if (pendingScrollRef.current && !userInputRef.current) return;
+            // Initialization, layout changes and auto-centering also emit
+            // scroll events. Only a reader gesture should suspend following
+            // progress; otherwise a late relocate leaves the TOC at the top.
+            if (!userInputRef.current) return;
             pendingScrollRef.current = false;
             userScrolledRef.current = true;
             if (scrollCooldownRef.current) clearTimeout(scrollCooldownRef.current);
             scrollCooldownRef.current = setTimeout(() => {
               userScrolledRef.current = false;
+              userInputRef.current = false;
             }, 10000);
           }}
           style={{ height: containerHeight }}

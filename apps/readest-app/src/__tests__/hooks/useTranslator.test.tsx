@@ -110,7 +110,7 @@ describe('custom translators in the registry and useTranslator', () => {
     expect(result.current.translator!.name.startsWith('custom:')).toBe(false);
   });
 
-  it('marks custom translators premium-only and keeps them from free users', () => {
+  it('honors explicit custom-translator access when formatting registry entries', () => {
     const custom = getTranslators().find((t) => t.name === 'custom:llm')!;
     expect(custom.premiumRequired).toBe(true);
     expect(isTranslatorAvailable(custom, true, true)).toBe(true);
@@ -120,17 +120,17 @@ describe('custom translators in the registry and useTranslator', () => {
     expect(isTranslatorAvailable(builtIn, true, false)).toBe(true);
   });
 
-  it('falls back to a built-in translator for a free user who picked a custom one', async () => {
+  it('keeps the selected custom translator for a free user', async () => {
     auth.token = sessionToken({ plan: 'free' });
     const { result } = renderHook(() => useTranslator({ provider: 'custom:llm' }));
     await waitFor(() => expect(result.current.translator).toBeDefined());
-    expect(result.current.translator!.name.startsWith('custom:')).toBe(false);
+    expect(result.current.translator!.name).toBe('custom:llm');
   });
 
-  it('falls back to a built-in translator when signed out', async () => {
+  it('keeps the selected custom translator when signed out', async () => {
     auth.token = null;
     const { result } = renderHook(() => useTranslator({ provider: 'custom:llm' }));
     await waitFor(() => expect(result.current.translator).toBeDefined());
-    expect(result.current.translator!.name.startsWith('custom:')).toBe(false);
+    expect(result.current.translator!.name).toBe('custom:llm');
   });
 });

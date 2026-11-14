@@ -42,7 +42,6 @@ import {
 } from '@/services/pack/packService';
 import { parseOpenWithFiles } from '@/helpers/openWith';
 import { getInitializedAppService, isTauriAppPlatform } from '@/services/environment';
-import { checkForAppUpdates, checkAppReleaseNotes } from '@/helpers/updater';
 import { impactFeedback } from '@tauri-apps/plugin-haptics';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 
@@ -499,19 +498,10 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   });
 
   useEffect(() => {
-    const doCheckAppUpdates = async () => {
-      if (appService?.hasUpdater && settings.autoCheckUpdates) {
-        await checkForAppUpdates(_, true, settings.updateChannel);
-      } else if (appService?.hasUpdater === false) {
-        checkAppReleaseNotes();
-      }
-    };
     if (settings.alwaysOnTop) {
       tauriHandleSetAlwaysOnTop(settings.alwaysOnTop);
     }
-    doCheckAppUpdates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appService?.hasUpdater, settings]);
+  }, [settings.alwaysOnTop]);
 
   useEffect(() => {
     if (appService?.isMobileApp) {
