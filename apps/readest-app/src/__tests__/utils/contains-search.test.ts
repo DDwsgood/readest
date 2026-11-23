@@ -39,4 +39,54 @@ describe('findContainsMatches', () => {
       ),
     ]).toEqual([{ start: 1, end: 2 }]);
   });
+
+  it('uses identical case folding in mapped and unmapped text', () => {
+    // Whole-string lowercase uses a final sigma in ΟΣ. Per-character lowercase
+    // must not produce a different result only because whitespace later in the
+    // text requires source-offset mapping.
+    expect([
+      ...findContainsMatches('ΟΣ  x', 'ος', {
+        matchCase: false,
+        matchDiacritics: false,
+      }),
+    ]).toEqual([{ start: 0, end: 2 }]);
+  });
+
+  it('collapses whitespace and drops format characters without losing source offsets', () => {
+    const text = '🙂 Cafe\u0301 quick \n\u200B  fox';
+    expect([
+      ...findContainsMatches(text, 'cafe quick fox', {
+        matchCase: false,
+        matchDiacritics: false,
+      }),
+    ]).toEqual([{ start: 3, end: text.length }]);
+
+    expect([
+      ...findContainsMatches(text, 'Cafe quick fox', {
+        matchCase: true,
+        matchDiacritics: false,
+      }),
+    ]).toEqual([{ start: 3, end: text.length }]);
+  });
+
+  it('keeps exact offsets after surrogate pairs and matches CJK text', () => {
+    expect([
+      ...findContainsMatches('🙂 Cafe\u0301 黄仁勋 한국어', 'cafe', {
+        matchCase: false,
+        matchDiacritics: false,
+      }),
+    ]).toEqual([{ start: 3, end: 8 }]);
+    expect([
+      ...findContainsMatches('黄仁勋 한국어', '黄仁勋', {
+        matchCase: false,
+        matchDiacritics: false,
+      }),
+    ]).toEqual([{ start: 0, end: 3 }]);
+    expect([
+      ...findContainsMatches('黄仁勋 한국어', '한국어', {
+        matchCase: false,
+        matchDiacritics: false,
+      }),
+    ]).toEqual([{ start: 4, end: 7 }]);
+  });
 });

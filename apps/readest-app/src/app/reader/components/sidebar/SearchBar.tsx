@@ -404,8 +404,10 @@ const SearchBar: React.FC<SearchBarProps> = ({ isVisible, bookKey, onHideSearchB
               });
             });
             if (subitems.length) {
+              // Accumulate off-screen and publish once at book-completed. Rendering
+              // every intermediate chapter repeatedly mounts the whole preceding
+              // result set and makes large searches quadratic on the UI thread.
               results.push({ index: event.result.index, label: event.result.label, subitems });
-              setSearchResults(bookKey, [...results]);
             }
           } else if (event.type === 'book-error' || event.type === 'book-skipped') {
             const code = event.type === 'book-error' ? event.code : undefined;

@@ -1,19 +1,18 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { GroupedVirtuoso, GroupedVirtuosoHandle } from 'react-virtuoso';
 import { BookSearchMatch, BookSearchResult, SearchExcerpt } from '@/types/book';
 import { FoliateView } from '@/types/view';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookProgress } from '@/store/readerProgressStore';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { useTranslation } from '@/hooks/useTranslation';
-import { findNearestCfi } from '@/utils/cfi';
-import useScrollToItem from '../../hooks/useScrollToItem';
+import { createCfiLocationMatcher, findNearestCfi } from '@/utils/cfi';
 import clsx from 'clsx';
 
 interface SearchResultItemProps {
-  bookKey: string;
   cfi: string;
   excerpt: SearchExcerpt;
-  isNearest?: boolean;
+  isCurrent?: boolean;
   isOnScreen?: boolean;
   onSelectResult: (cfi: string) => void;
 }
@@ -113,75 +112,58 @@ const ExcerptBody: React.FC<{ excerpt: SearchExcerpt }> = ({ excerpt }) => {
   );
 };
 
-const SearchResultItem: React.FC<SearchResultItemProps> = ({
-  bookKey,
-  cfi,
-  excerpt,
-  isNearest,
-  isOnScreen,
-  onSelectResult,
-}) => {
-  const { getProgress } = useReaderStore();
-  const progress = getProgress(bookKey)!;
-  const { isCurrent, viewRef } = useScrollToItem(cfi, progress, isNearest);
+const SearchResultItem = React.memo<SearchResultItemProps>(
+  ({ cfi, excerpt, isCurrent, isOnScreen, onSelectResult }) => {
+    return (
+      <li
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role
+        role='button'
+        className={clsx(
+          'my-2 cursor-pointer rounded-lg p-2 text-sm',
+          isCurrent || isOnScreen
+            ? 'bg-base-300 hover:bg-gray-300/70'
+            : 'hover:bg-base-300 bg-base-100',
+        )}
+        tabIndex={0}
+        aria-current={isCurrent ? 'page' : undefined}
+        onClick={() => onSelectResult(cfi)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            onSelectResult(cfi);
+          } else {
+            e.stopPropagation();
+          }
+        }}
+      >
+        <div className='line-clamp-3'>
+          <ExcerptBody excerpt={excerpt} />
+        </div>
+      </li>
+    );
+  },
+);
+SearchResultItem.displayName = 'SearchResultItem';
 
-  return (
-    <li
-      // eslint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role
-      role='button'
-      ref={viewRef}
-      className={clsx(
-        'my-2 cursor-pointer rounded-lg p-2 text-sm',
-        isCurrent || isOnScreen
-          ? 'bg-base-300 hover:bg-gray-300/70'
-          : 'hover:bg-base-300 bg-base-100',
-      )}
-      tabIndex={0}
-      onClick={() => onSelectResult(cfi)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          onSelectResult(cfi);
-        } else {
-          e.stopPropagation();
-        }
-      }}
-    >
-      <div className='line-clamp-3'>
-        <ExcerptBody excerpt={excerpt} />
-      </div>
-    </li>
-  );
-};
-
-interface ChapterSectionProps {
-  bookKey: string;
+interface ChapterHeaderProps {
   label: string;
-  subitems: BookSearchMatch[];
-  nearestCfi: string | null;
-  visibleCfiSet: Set<string>;
+  matchCount: number;
   isExpanded: boolean;
   onToggle: () => void;
-  onSelectResult: (cfi: string) => void;
 }
 
-const ChapterSection: React.FC<ChapterSectionProps> = ({
-  bookKey,
+const ChapterHeader: React.FC<ChapterHeaderProps> = ({
   label,
-  subitems,
-  nearestCfi,
-  visibleCfiSet,
+  matchCount,
   isExpanded,
   onToggle,
-  onSelectResult,
 }) => {
-  const matchCount = subitems.length;
   const headerRef = useRef<HTMLHeadingElement>(null);
   const wasStuckRef = useRef<boolean>(false);
 
   const handleToggle = useCallback(() => {
     if (isExpanded && headerRef.current) {
       const header = headerRef.current;
-      const container = header.closest('.search-results') as HTMLElement | null;
+      const container = header.closest('[data-virtuoso-scroller]') as HTMLElement | null;
       if (container) {
         // Detect if the header is currently stuck at the top of the scroll container.
         // Compare visual positions (getBoundingClientRect) rather than offsetTop,
@@ -201,7 +183,7 @@ const ChapterSection: React.FC<ChapterSectionProps> = ({
     if (!wasStuckRef.current) return;
     const header = headerRef.current;
     if (!header) return;
-    const container = header.closest('.search-results') as HTMLElement | null;
+    const container = header.closest('[data-virtuoso-scroller]') as HTMLElement | null;
     if (!container) return;
     // Recalculate the header's position after the collapse (DOM has already
     // updated) and scroll so the collapsed header sits at the top of the viewport.
@@ -212,58 +194,36 @@ const ChapterSection: React.FC<ChapterSectionProps> = ({
   }, [isExpanded]);
 
   return (
-    <ul>
-      {/* The sticky band carries the surface color so results scrolling underneath
-          stay occluded; the button inside owns the hover and focus affordances. */}
-      <h3
-        ref={headerRef}
-        className='not-eink:bg-base-200 eink:bg-base-100 sticky top-0 z-10 font-normal'
+    <h3 ref={headerRef} className='not-eink:bg-base-200 eink:bg-base-100 font-normal'>
+      <button
+        type='button'
+        className='not-eink:hover:bg-base-300 focus-visible:ring-base-content/15 flex w-full select-none items-center justify-between rounded-sm px-1 py-1 text-start focus-visible:outline-hidden focus-visible:ring-2'
+        onClick={handleToggle}
+        aria-expanded={isExpanded}
       >
-        <button
-          type='button'
-          className='not-eink:hover:bg-base-300 focus-visible:ring-base-content/15 flex w-full select-none items-center justify-between rounded-sm px-1 py-1 text-start focus-visible:outline-hidden focus-visible:ring-2'
-          onClick={handleToggle}
-          aria-expanded={isExpanded}
-        >
-          <span className='flex min-w-0 items-center gap-1.5'>
-            <svg
-              viewBox='0 0 8 10'
-              width='8'
-              height='10'
-              className={clsx(
-                'text-base-content not-eink:transition-transform shrink-0',
-                isExpanded ? 'rotate-90' : 'rotate-0',
-              )}
-              style={{ transformOrigin: 'center' }}
-              fill='currentColor'
-              aria-hidden='true'
-              focusable='false'
-            >
-              <polygon points='0 0, 8 5, 0 10' />
-            </svg>
-            <span className='truncate'>{label}</span>
-          </span>
-          <span className='text-base-content/60 ms-2 shrink-0 whitespace-nowrap text-xs'>
-            {matchCount}
-          </span>
-        </button>
-      </h3>
-      {isExpanded && (
-        <ul>
-          {subitems.map((item, index) => (
-            <SearchResultItem
-              key={`${index}-${item.cfi}`}
-              bookKey={bookKey}
-              cfi={item.cfi}
-              excerpt={item.excerpt}
-              isNearest={item.cfi === nearestCfi}
-              isOnScreen={visibleCfiSet.has(item.cfi)}
-              onSelectResult={onSelectResult}
-            />
-          ))}
-        </ul>
-      )}
-    </ul>
+        <span className='flex min-w-0 items-center gap-1.5'>
+          <svg
+            viewBox='0 0 8 10'
+            width='8'
+            height='10'
+            className={clsx(
+              'text-base-content not-eink:transition-transform shrink-0',
+              isExpanded ? 'rotate-90' : 'rotate-0',
+            )}
+            style={{ transformOrigin: 'center' }}
+            fill='currentColor'
+            aria-hidden='true'
+            focusable='false'
+          >
+            <polygon points='0 0, 8 5, 0 10' />
+          </svg>
+          <span className='truncate'>{label}</span>
+        </span>
+        <span className='text-base-content/60 ms-2 shrink-0 whitespace-nowrap text-xs'>
+          {matchCount}
+        </span>
+      </button>
+    </h3>
   );
 };
 
@@ -271,6 +231,13 @@ interface SearchResultsProps {
   bookKey: string;
   results: BookSearchResult[] | BookSearchMatch[];
   onSelectResult: (cfi: string) => void;
+}
+
+interface SearchSection {
+  key: string;
+  label: string;
+  subitems: BookSearchMatch[];
+  hasHeader: boolean;
 }
 
 const SearchResults: React.FC<SearchResultsProps> = ({ bookKey, results, onSelectResult }) => {
@@ -317,21 +284,71 @@ const SearchResults: React.FC<SearchResultsProps> = ({ bookKey, results, onSelec
     [collapsedSections, setSearchCollapsedSections, navState.collapsedSections, bookKey],
   );
 
-  const allCfis = useMemo(() => {
-    const cfis: string[] = [];
-    for (const result of results) {
-      if ('subitems' in result) {
-        for (const item of result.subitems) cfis.push(item.cfi);
-      } else {
-        cfis.push(result.cfi);
-      }
+  const sections = useMemo<SearchSection[]>(() => {
+    if (results.every((result) => !('subitems' in result))) {
+      return [
+        {
+          key: 'all-results',
+          label: '',
+          subitems: results as BookSearchMatch[],
+          hasHeader: false,
+        },
+      ];
     }
-    return cfis;
+    return results.map((result, index) =>
+      'subitems' in result
+        ? {
+            key: `${index}-${result.label}`,
+            label: result.label,
+            subitems: result.subitems,
+            hasHeader: true,
+          }
+        : {
+            key: `match-${index}`,
+            label: '',
+            subitems: [result],
+            hasHeader: false,
+          },
+    );
   }, [results]);
+
+  // GroupedVirtuoso owns the sticky chapter headers and mounts only rows near
+  // the viewport. Collapsed groups stay as zero-length groups so their headers
+  // remain available for expanding them again.
+  const groupCounts = useMemo(
+    () =>
+      sections.map((section) =>
+        section.hasHeader && collapsedSections.has(section.key) ? 0 : section.subitems.length,
+      ),
+    [sections, collapsedSections],
+  );
+  const visibleItems = useMemo(
+    () =>
+      sections.flatMap((section) =>
+        section.hasHeader && collapsedSections.has(section.key) ? [] : section.subitems,
+      ),
+    [sections, collapsedSections],
+  );
+
+  const allCfis = useMemo(
+    () => sections.flatMap((section) => section.subitems.map((item) => item.cfi)),
+    [sections],
+  );
 
   const nearestCfi = useMemo(() => {
     return findNearestCfi(allCfis, progress?.location);
   }, [progress?.location, allCfis]);
+  const nearestIndex = useMemo(
+    () => (nearestCfi ? visibleItems.findIndex((item) => item.cfi === nearestCfi) : -1),
+    [nearestCfi, visibleItems],
+  );
+
+  // Collapse the location once per page turn, not once per result row. Only the
+  // virtualized rows near the viewport invoke the returned predicate.
+  const locationMatcher = useMemo(
+    () => createCfiLocationMatcher(progress?.location),
+    [progress?.location],
+  );
 
   // Cfis that are on screen but outside the reported location range (the
   // non-primary section of a page straddling a chapter boundary). Recomputes
@@ -345,10 +362,90 @@ const SearchResults: React.FC<SearchResultsProps> = ({ bookKey, results, onSelec
     return getVisibleCfiSet(view, allCfis, containerRect);
   }, [allCfis, progress, getView, bookKey]);
 
-  const totalMatches = useMemo(
-    () =>
-      results.reduce((sum, result) => sum + ('subitems' in result ? result.subitems.length : 1), 0),
-    [results],
+  const virtuosoRef = useRef<GroupedVirtuosoHandle | null>(null);
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const visibleCenterRef = useRef(0);
+  const lastScrolledCfiRef = useRef<string | null>(null);
+  const [initialTopIndex] = useState(() => (searchProgress >= 1 ? nearestIndex : 0));
+  const initialScrollHandledRef = useRef(initialTopIndex > 0);
+
+  const handleScrollerRef = useCallback((element: HTMLElement | Window | null) => {
+    setScroller(element instanceof HTMLElement ? element : null);
+  }, []);
+
+  // Replace thousands of per-row scroll effects and layout reads with one
+  // imperative scroll to the nearest result. While a new search is running,
+  // leave the previous list's scroll position alone until its replacement arrives.
+  useEffect(() => {
+    if (searchProgress < 1) {
+      lastScrolledCfiRef.current = null;
+      return;
+    }
+    if (nearestIndex < 0 || !nearestCfi) return;
+    if (nearestCfi === lastScrolledCfiRef.current) return;
+    lastScrolledCfiRef.current = nearestCfi;
+    if (initialScrollHandledRef.current) {
+      initialScrollHandledRef.current = false;
+      return;
+    }
+
+    const row = scroller?.querySelector(`[data-index="${nearestIndex}"]`);
+    if (scroller && row) {
+      const rowRect = row.getBoundingClientRect();
+      const viewRect = scroller.getBoundingClientRect();
+      if (rowRect.top >= viewRect.top && rowRect.bottom <= viewRect.bottom) return;
+    }
+
+    const isEink = document.documentElement.getAttribute('data-eink') === 'true';
+    const distance = Math.abs(nearestIndex - visibleCenterRef.current);
+    const behavior = isEink || distance > 16 ? 'auto' : 'smooth';
+    virtuosoRef.current?.scrollToIndex({ index: nearestIndex, align: 'center', behavior });
+    if (behavior === 'auto') {
+      requestAnimationFrame(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: nearestIndex,
+          align: 'center',
+          behavior: 'auto',
+        });
+      });
+    }
+  }, [nearestCfi, nearestIndex, scroller, searchProgress]);
+
+  const renderGroup = useCallback(
+    (index: number) => {
+      const section = sections[index];
+      if (!section?.hasHeader) return null;
+      return (
+        <div className='px-2'>
+          <ChapterHeader
+            label={section.label}
+            matchCount={section.subitems.length}
+            isExpanded={!collapsedSections.has(section.key)}
+            onToggle={() => toggleSection(section.key)}
+          />
+        </div>
+      );
+    },
+    [sections, collapsedSections, toggleSection],
+  );
+
+  const renderItem = useCallback(
+    (index: number) => {
+      const item = visibleItems[index];
+      if (!item) return null;
+      return (
+        <ul className='px-2'>
+          <SearchResultItem
+            cfi={item.cfi}
+            excerpt={item.excerpt}
+            isCurrent={locationMatcher(item.cfi)}
+            isOnScreen={visibleCfiSet.has(item.cfi)}
+            onSelectResult={onSelectResult}
+          />
+        </ul>
+      );
+    },
+    [visibleItems, locationMatcher, visibleCfiSet, onSelectResult],
   );
 
   // The error itself is surfaced in the search bar; once the search has finished
@@ -363,42 +460,28 @@ const SearchResults: React.FC<SearchResultsProps> = ({ bookKey, results, onSelec
   }
 
   return (
-    <div className='search-results overflow-y-auto px-2 font-sans text-sm font-light'>
-      <ul className='px-2'>
-        {results.map((result, index) => {
-          if ('subitems' in result) {
-            const sectionKey = `${index}-${result.label}`;
-            return (
-              <ChapterSection
-                key={sectionKey}
-                bookKey={bookKey}
-                label={result.label}
-                subitems={result.subitems}
-                nearestCfi={nearestCfi}
-                visibleCfiSet={visibleCfiSet}
-                isExpanded={!collapsedSections.has(sectionKey)}
-                onToggle={() => toggleSection(sectionKey)}
-                onSelectResult={onSelectResult}
-              />
-            );
-          } else {
-            return (
-              <SearchResultItem
-                key={`${index}-${result.cfi}`}
-                bookKey={bookKey}
-                cfi={result.cfi}
-                excerpt={result.excerpt}
-                isNearest={result.cfi === nearestCfi}
-                isOnScreen={visibleCfiSet.has(result.cfi)}
-                onSelectResult={onSelectResult}
-              />
-            );
+    <div className='search-results flex min-h-0 flex-1 flex-col px-2 font-sans text-sm font-light'>
+      <div className='min-h-0 flex-1'>
+        <GroupedVirtuoso
+          ref={virtuosoRef}
+          scrollerRef={handleScrollerRef}
+          initialTopMostItemIndex={
+            initialTopIndex > 0 ? { index: initialTopIndex, align: 'center' } : 0
           }
-        })}
-      </ul>
+          rangeChanged={({ startIndex, endIndex }) => {
+            visibleCenterRef.current = Math.floor((startIndex + endIndex) / 2);
+          }}
+          style={{ height: '100%' }}
+          groupCounts={groupCounts}
+          groupContent={renderGroup}
+          computeItemKey={(index) => `${index}-${visibleItems[index]?.cfi ?? ''}`}
+          itemContent={renderItem}
+          overscan={200}
+        />
+      </div>
       {searchProgress >= 1 && (
         <div className='text-base-content/60 px-2 py-2 text-center text-xs'>
-          {_('{{count}} results', { count: totalMatches })}
+          {_('{{count}} results', { count: allCfis.length })}
         </div>
       )}
     </div>

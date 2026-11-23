@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import React from 'react';
 import { bookDataStoreHooks } from '@/__tests__/helpers/book-data-store-mock';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -95,8 +96,46 @@ vi.mock('@/hooks/useResponsiveSize', () => ({
 
 vi.mock('@/utils/cfi', () => ({
   findNearestCfi: () => null,
-  isCfiInLocation: () => false,
+  createCfiLocationMatcher: () => () => false,
 }));
+
+// The integration assertions need the result rows, but happy-dom cannot
+// measure a real virtualized viewport. Render all supplied groups here.
+vi.mock('react-virtuoso', async () => {
+  const ReactMod = await import('react');
+  return {
+    GroupedVirtuoso: ReactMod.forwardRef(
+      (
+        props: {
+          groupCounts: number[];
+          groupContent?: (index: number) => React.ReactNode;
+          itemContent?: (index: number, groupIndex: number) => React.ReactNode;
+        },
+        _ref: React.Ref<unknown>,
+      ) => {
+        let offset = 0;
+        return (
+          <div>
+            {props.groupCounts.map((count, groupIndex) => {
+              const start = offset;
+              offset += count;
+              return (
+                <div key={groupIndex}>
+                  {props.groupContent?.(groupIndex)}
+                  {Array.from({ length: count }, (_, index) => (
+                    <React.Fragment key={start + index}>
+                      {props.itemContent?.(start + index, groupIndex)}
+                    </React.Fragment>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        );
+      },
+    ),
+  };
+});
 
 function SearchSurface({
   bookKey = 'bookhash-pane1',

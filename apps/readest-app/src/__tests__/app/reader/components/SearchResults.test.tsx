@@ -1,9 +1,47 @@
 // @vitest-environment happy-dom
+import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import SearchResults from '@/app/reader/components/sidebar/SearchResults';
 import type { BookSearchMatch } from '@/types/book';
+
+// Render all supplied rows because happy-dom cannot measure the real virtualizer.
+vi.mock('react-virtuoso', async () => {
+  const ReactMod = await import('react');
+  return {
+    GroupedVirtuoso: ReactMod.forwardRef(
+      (
+        props: {
+          groupCounts: number[];
+          groupContent?: (index: number) => React.ReactNode;
+          itemContent?: (index: number, groupIndex: number) => React.ReactNode;
+        },
+        _ref: React.Ref<unknown>,
+      ) => {
+        let offset = 0;
+        return (
+          <div>
+            {props.groupCounts.map((count, groupIndex) => {
+              const start = offset;
+              offset += count;
+              return (
+                <div key={groupIndex}>
+                  {props.groupContent?.(groupIndex)}
+                  {Array.from({ length: count }, (_, index) => (
+                    <React.Fragment key={start + index}>
+                      {props.itemContent?.(start + index, groupIndex)}
+                    </React.Fragment>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        );
+      },
+    ),
+  };
+});
 
 const cjk = (length: number, seed: string) => seed.repeat(length).slice(0, length);
 

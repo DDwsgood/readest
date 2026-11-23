@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -6,6 +7,16 @@ import SearchResults from '@/app/reader/components/sidebar/SearchResults';
 import { BookSearchResult } from '@/types/book';
 
 const navState = vi.hoisted(() => ({ searchProgress: 1 }));
+const virtuosoState = vi.hoisted(() => ({
+  renderLimit: Number.POSITIVE_INFINITY,
+  groupCounts: [] as number[],
+  initialTopMostItemIndex: undefined as unknown,
+  scrollToIndex: [] as unknown[],
+}));
+const cfiState = vi.hoisted(() => ({
+  locationChecks: 0,
+  nearestCfi: null as string | null,
+}));
 const readerStoreState = vi.hoisted(() => ({
   getProgress: () => ({ location: '' }),
   getView: () => null,
@@ -32,9 +43,60 @@ vi.mock('@/hooks/useTranslation', () => ({
 }));
 
 vi.mock('@/utils/cfi', () => ({
-  findNearestCfi: () => null,
-  isCfiInLocation: () => false,
+  findNearestCfi: () => cfiState.nearestCfi,
+  createCfiLocationMatcher: () => () => {
+    cfiState.locationChecks++;
+    return false;
+  },
 }));
+
+// happy-dom has no layout engine for the real virtualizer to measure. This
+// stub renders every row for interaction tests, or only the configured number
+// of rows to model a small viewport for the virtualization regression test.
+vi.mock('react-virtuoso', async () => {
+  const ReactMod = await import('react');
+  return {
+    GroupedVirtuoso: ReactMod.forwardRef(
+      (
+        props: {
+          groupCounts: number[];
+          initialTopMostItemIndex?: unknown;
+          groupContent?: (index: number) => React.ReactNode;
+          itemContent?: (index: number, groupIndex: number) => React.ReactNode;
+        },
+        ref: React.Ref<unknown>,
+      ) => {
+        ReactMod.useImperativeHandle(ref, () => ({
+          scrollToIndex: (options: unknown) => virtuosoState.scrollToIndex.push(options),
+        }));
+        virtuosoState.groupCounts = [...props.groupCounts];
+        virtuosoState.initialTopMostItemIndex = props.initialTopMostItemIndex;
+        let remaining = virtuosoState.renderLimit;
+        let offset = 0;
+        return (
+          <div data-virtuoso-scroller='true'>
+            {props.groupCounts.map((count, groupIndex) => {
+              const start = offset;
+              offset += count;
+              const renderedCount = Math.max(0, Math.min(count, remaining));
+              remaining -= renderedCount;
+              return (
+                <div key={groupIndex}>
+                  {props.groupContent?.(groupIndex)}
+                  {Array.from({ length: renderedCount }, (_, index) => (
+                    <React.Fragment key={start + index}>
+                      {props.itemContent?.(start + index, groupIndex)}
+                    </React.Fragment>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        );
+      },
+    ),
+  };
+});
 
 const makeResults = (): BookSearchResult[] =>
   ['Chapter One', 'Chapter Two'].map((label, chapter) => ({
@@ -54,6 +116,12 @@ describe('SearchResults chapter sections', () => {
   afterEach(() => {
     cleanup();
     navState.searchProgress = 1;
+    virtuosoState.renderLimit = Number.POSITIVE_INFINITY;
+    virtuosoState.groupCounts = [];
+    virtuosoState.initialTopMostItemIndex = undefined;
+    virtuosoState.scrollToIndex = [];
+    cfiState.locationChecks = 0;
+    cfiState.nearestCfi = null;
   });
 
   it('collapses and expands a chapter section when its header is toggled', () => {
@@ -99,5 +167,53 @@ describe('SearchResults chapter sections', () => {
     const sticky = header.closest('h3')!;
     expect(sticky.className).toContain('eink:bg-base-100');
     expect(sticky.className).toContain('not-eink:bg-base-200');
+  });
+
+  it('opens at the match nearest the reading position instead of the first chapter', () => {
+    const results = makeResults();
+    const nearest = results[1]!.subitems[1]!;
+    cfiState.nearestCfi = nearest.cfi;
+
+    renderResults(results);
+
+    // Four matches precede/grouped as [chapter 1: 2, chapter 2: 2]; the
+    // nearest match is the fourth item (flat index 3).
+    expect(virtuosoState.initialTopMostItemIndex).toEqual({ index: 3, align: 'center' });
+  });
+
+  it('scrolls to the nearest match when a repeated search publishes its final results', () => {
+    const results = makeResults();
+    navState.searchProgress = 0;
+    const { rerender } = renderResults(results);
+
+    const finalResults = makeResults();
+    navState.searchProgress = 1;
+    cfiState.nearestCfi = finalResults[1]!.subitems[1]!.cfi;
+    rerender(<SearchResults bookKey='book-1' results={finalResults} onSelectResult={vi.fn()} />);
+
+    expect(virtuosoState.scrollToIndex).toContainEqual({
+      index: 3,
+      align: 'center',
+      behavior: 'smooth',
+    });
+  });
+
+  it('renders and location-checks only viewport rows after 4500 results arrive', () => {
+    virtuosoState.renderLimit = 10;
+    const results: BookSearchResult[] = Array.from({ length: 90 }, (_, chapter) => ({
+      index: chapter,
+      label: `Chapter ${chapter}`,
+      subitems: Array.from({ length: 50 }, (_, match) => ({
+        cfi: `epubcfi(/6/${(chapter + 1) * 2}!/4/${match + 2}:0)`,
+        excerpt: { pre: 'before ', match: 'name', post: ' after' },
+      })),
+    }));
+
+    renderResults(results);
+
+    expect(resultItems()).toHaveLength(10);
+    expect(virtuosoState.groupCounts.reduce((sum, count) => sum + count, 0)).toBe(4500);
+    // The old full list checked all 4500 rows; a ten-row viewport checks ten.
+    expect(cfiState.locationChecks).toBe(10);
   });
 });

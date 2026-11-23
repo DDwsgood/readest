@@ -132,6 +132,9 @@ describe('SearchBar', () => {
 
     await renderBar();
 
+    // Intermediate result events only accumulate data; the UI receives one
+    // complete result set when the search finishes.
+    expect(mocks.setSearchResults).toHaveBeenCalledTimes(1);
     expect(mocks.setSearchResults).toHaveBeenLastCalledWith('book-1', [
       { index: 0, label: 'Chapter', subitems: [{ cfi: 'test-cfi', excerpt: 'Match' }] },
     ]);
