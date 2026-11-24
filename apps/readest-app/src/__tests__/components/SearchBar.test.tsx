@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   viewSearch: vi.fn(),
   viewAvailable: true,
   setSearchResults: vi.fn(),
+  setSearchProgress: vi.fn(),
   setSearchError: vi.fn(),
   resolveSearchResultCfis: vi.fn(),
   // Stable like the real context value; a fresh object per render would
@@ -61,7 +62,7 @@ vi.mock('@/store/sidebarStore', () => ({
   useSidebarStore: () => ({
     setSearchTerm: vi.fn(),
     setSearchResults: mocks.setSearchResults,
-    setSearchProgress: vi.fn(),
+    setSearchProgress: mocks.setSearchProgress,
     setSearchError: mocks.setSearchError,
     setSearchStatus: vi.fn(),
     getSearchStatus: () => 'searching',
@@ -90,6 +91,7 @@ describe('SearchBar', () => {
       yield 'done';
     });
     mocks.setSearchResults.mockClear();
+    mocks.setSearchProgress.mockClear();
     mocks.setSearchError.mockClear();
     mocks.resolveSearchResultCfis.mockReset().mockResolvedValue([]);
   });
@@ -159,6 +161,24 @@ describe('SearchBar', () => {
 
     expect(mocks.searchLibraryBooks).toHaveBeenCalledTimes(1);
     expect(mocks.searchLibraryBooks.mock.calls[0]![3].sectionIndex).toBe(4);
+  });
+
+  it('throttles per-section progress updates during a long search', async () => {
+    mocks.searchLibraryBooks.mockImplementation(async function* () {
+      for (let section = 1; section <= 100; section++) {
+        yield {
+          type: 'progress',
+          book: { hash: 'book-hash' },
+          bookProgress: section / 100,
+        };
+      }
+      yield { type: 'book-completed', book: { hash: 'book-hash' }, matchCount: 0 };
+    });
+
+    await renderBar();
+
+    expect(mocks.setSearchProgress.mock.calls.length).toBeLessThan(10);
+    expect(mocks.setSearchProgress).toHaveBeenLastCalledWith('book-1', 1);
   });
 
   // The library scan caps each book at 500 matches; in-book search must not

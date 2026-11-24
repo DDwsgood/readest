@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { getVisibleCfiSet } from '@/app/reader/components/sidebar/SearchResults';
 import { FoliateView } from '@/types/view';
@@ -22,8 +22,8 @@ const rect = (left: number, right: number, top = 0, bottom = 10): Rect => ({
   bottom,
 });
 
-const frameEl = (left: number, right: number) => ({
-  getBoundingClientRect: () => rect(left, right, 0, 100),
+const frameEl = (left: number, right: number, top = 0, bottom = 100) => ({
+  getBoundingClientRect: () => rect(left, right, top, bottom),
 });
 
 const rangeLike = (left: number, right: number) => ({
@@ -75,6 +75,20 @@ describe('getVisibleCfiSet', () => {
       () => ({ index: 1, anchor: () => rangeLike(0, 10) }),
     );
     expect(getVisibleCfiSet(view, ['epubcfi(/6/1!/4/1)'], viewport)).toEqual(new Set());
+  });
+
+  it('skips vertically off-screen preloaded sections in scrolled mode', () => {
+    const resolveCFI = vi.fn(() => ({ index: 1, anchor: () => rangeLike(50, 100) }));
+    const view = makeView(
+      [
+        { index: 0, doc: { defaultView: { frameElement: frameEl(0, 800, 0, 600) } } },
+        { index: 1, doc: { defaultView: { frameElement: frameEl(0, 800, 600, 1200) } } },
+      ],
+      0,
+      resolveCFI,
+    );
+    expect(getVisibleCfiSet(view, ['epubcfi(/6/1!/4/2)'], viewport)).toEqual(new Set());
+    expect(resolveCFI).not.toHaveBeenCalled();
   });
 
   it('highlights a result in the adjacent section whose rect is on screen', () => {

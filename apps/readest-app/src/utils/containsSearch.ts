@@ -3,10 +3,18 @@ interface ContainsSearchOptions {
   matchDiacritics: boolean;
 }
 
+interface SourceRun {
+  foldedStart: number;
+  sourceStart: number;
+  foldedLength: number;
+  sourceLength: number;
+  extendedEnd?: number;
+  aligned: boolean;
+}
+
 interface FoldedText {
   value: string;
-  starts?: number[];
-  ends?: number[];
+  runs?: SourceRun[];
 }
 
 // NFD recursively decomposes Hangul syllables and adds no value for the other
@@ -18,105 +26,198 @@ const FORMAT_OR_COLLAPSED_WHITESPACE = /\p{Format}|\s{2,}/u;
 
 const endsBeforeCombiningMark = (text: string, end: number) => /^\p{M}/u.test(text.slice(end));
 
+const MAPPING_BOUNDARY = /\p{Format}+|\s{2,}/gu;
+const SURROGATE = /[\uD800-\uDFFF]/;
+
+const validLocale = (locale: string | undefined, matchCase: boolean) => {
+  if (matchCase || !locale) return locale;
+  try {
+    ''.toLocaleLowerCase(locale);
+    return locale;
+  } catch {
+    return undefined;
+  }
+};
+
+const foldTextValue = (
+  value: string,
+  { matchCase = false, matchDiacritics = false }: Partial<ContainsSearchOptions> = {},
+  locale?: string,
+): string => {
+  let folded = matchCase ? value : value.toLocaleLowerCase(locale);
+  if (!matchDiacritics) {
+    folded = folded.replace(NORMALIZE_RUN, (run) => run.normalize('NFD')).replace(/\p{M}/gu, '');
+  }
+  return folded.replace(/\p{Format}/gu, '').replace(/\s+/gu, ' ');
+};
+
 // Fold in bulk first and return UTF-16 source maps whenever characters are
 // dropped, collapsed, or change length so matches map back to original text.
 export const foldSearchText = (
   value: string,
-  { matchCase = false, matchDiacritics = false }: Partial<ContainsSearchOptions> = {},
-  locales?: string,
+  options: Partial<ContainsSearchOptions> = {},
+  locale?: string,
 ): FoldedText => {
-  let locale = locales;
-  if (!matchCase && locale) {
-    try {
-      ''.toLocaleLowerCase(locale);
-    } catch {
-      locale = undefined;
-    }
-  }
-
-  const foldSource = (source: string, finalSigma = false) => {
-    let folded = source;
-    if (!matchCase) {
-      if (source === '\u03a3') folded = finalSigma ? '\u03c2' : '\u03c3';
-      else folded = source.toLocaleLowerCase(locale);
-    }
-    if (!matchDiacritics) {
-      folded = folded.replace(NORMALIZE_RUN, (run) => run.normalize('NFD')).replace(/\p{M}/gu, '');
-    }
-    return folded;
-  };
-
-  const foldWhole = (input: string) => {
-    let folded = matchCase ? input : input.toLocaleLowerCase(locale);
-    if (!matchDiacritics) {
-      folded = folded.replace(NORMALIZE_RUN, (run) => run.normalize('NFD')).replace(/\p{M}/gu, '');
-    }
-    return folded.replace(/\p{Format}/gu, '').replace(/\s+/gu, ' ');
-  };
-
-  const folded = foldWhole(value);
+  const { matchCase = false, matchDiacritics = false } = options;
+  locale = validLocale(locale, matchCase);
+  const folded = foldTextValue(value, options, locale);
   // No removed characters, collapsed runs, or net length change: folded and
   // source UTF-16 offsets are aligned, so avoid two large mapping arrays.
   if (folded.length === value.length && !FORMAT_OR_COLLAPSED_WHITESPACE.test(value)) {
     return { value: folded };
   }
 
-  const starts: number[] = [];
-  const ends: number[] = [];
+  const foldSource = (source: string, finalSigma = false) => {
+    let transformed = source;
+    if (!matchCase) {
+      if (source === '\u03a3') transformed = finalSigma ? '\u03c2' : '\u03c3';
+      else transformed = source.toLocaleLowerCase(locale);
+    }
+    if (!matchDiacritics) {
+      transformed = transformed
+        .replace(NORMALIZE_RUN, (run) => run.normalize('NFD'))
+        .replace(/\p{M}/gu, '');
+    }
+    return transformed.replace(/\s+/gu, ' ');
+  };
+
+  const runs: SourceRun[] = [];
   let output = '';
-  let sourceOffset = 0;
   let pendingWhitespace: { start: number; end: number } | null = null;
 
   const extendPrevious = (end: number) => {
     if (pendingWhitespace) pendingWhitespace.end = end;
-    else if (ends.length) ends[ends.length - 1] = end;
+    else if (runs.length) runs[runs.length - 1]!.extendedEnd = end;
   };
 
   const flushWhitespace = () => {
     if (!pendingWhitespace) return;
+    runs.push({
+      foldedStart: output.length,
+      sourceStart: pendingWhitespace.start,
+      foldedLength: 1,
+      sourceLength: pendingWhitespace.end - pendingWhitespace.start,
+      aligned: false,
+    });
     output += ' ';
-    starts.push(pendingWhitespace.start);
-    ends.push(pendingWhitespace.end);
     pendingWhitespace = null;
   };
 
-  for (const source of value) {
-    const start = sourceOffset;
-    sourceOffset += source.length;
-    if (/^\p{Format}$/u.test(source)) {
-      extendPrevious(sourceOffset);
-      continue;
-    }
+  const append = (source: string, start: number, finalSigma = false) => {
+    const end = start + source.length;
     if (/^\s$/u.test(source)) {
-      if (pendingWhitespace) pendingWhitespace.end = sourceOffset;
-      else pendingWhitespace = { start, end: sourceOffset };
-      continue;
+      if (pendingWhitespace) pendingWhitespace.end = end;
+      else pendingWhitespace = { start, end };
+      return;
     }
-
-    // Match whole-string lowercase for Greek final sigma even when later
-    // whitespace or formatting forces this mapped path.
-    const finalSigma =
-      source === '\u03a3' &&
-      /\p{Cased}[\p{Case_Ignorable}]*$/u.test(value.slice(0, start)) &&
-      !/^\p{Case_Ignorable}*\p{Cased}/u.test(value.slice(sourceOffset));
     const transformed = foldSource(source, finalSigma);
     if (!transformed) {
-      extendPrevious(sourceOffset);
-      continue;
+      extendPrevious(end);
+      return;
     }
     flushWhitespace();
+    runs.push({
+      foldedStart: output.length,
+      sourceStart: start,
+      foldedLength: transformed.length,
+      sourceLength: source.length,
+      aligned: false,
+    });
     output += transformed;
-    for (let index = 0; index < transformed.length; index++) {
-      starts.push(start);
-      ends.push(sourceOffset);
+  };
+
+  const appendOneByOne = (run: string, start: number) => {
+    let sourceOffset = start;
+    for (const source of run) {
+      const sourceStart = sourceOffset;
+      sourceOffset += source.length;
+      const finalSigma =
+        source === '\u03a3' &&
+        /\p{Cased}[\p{Case_Ignorable}]*$/u.test(value.slice(0, sourceStart)) &&
+        !/^\p{Case_Ignorable}*\p{Cased}/u.test(value.slice(sourceOffset));
+      append(source, sourceStart, finalSigma);
     }
+  };
+
+  const appendRun = (originalRun: string, originalStart: number) => {
+    if (!originalRun) return;
+    let run = originalRun;
+    let start = originalStart;
+    let trailingWhitespace = '';
+    // Keep edge whitespace pending so removing a format or combining character
+    // cannot split what the whole-value fold turns into one collapsed space.
+    if (/^\s/u.test(run)) {
+      append(run[0]!, start);
+      run = run.slice(1);
+      start++;
+    }
+    if (run && /^\s/u.test(run.at(-1)!)) {
+      trailingWhitespace = run.at(-1)!;
+      run = run.slice(0, -1);
+    }
+
+    if (run) {
+      const transformed = foldSource(run);
+      if (
+        !run.includes('\u03a3') &&
+        transformed.length === run.length &&
+        !SURROGATE.test(run) &&
+        !(pendingWhitespace && /^\s/u.test(transformed)) &&
+        !/\s$/u.test(transformed)
+      ) {
+        flushWhitespace();
+        runs.push({
+          foldedStart: output.length,
+          sourceStart: start,
+          foldedLength: run.length,
+          sourceLength: run.length,
+          aligned: true,
+        });
+        output += transformed;
+      } else {
+        appendOneByOne(run, start);
+      }
+    }
+    if (trailingWhitespace) append(trailingWhitespace, originalStart + originalRun.length - 1);
+  };
+
+  let sourceOffset = 0;
+  for (const match of value.matchAll(MAPPING_BOUNDARY)) {
+    const start = match.index;
+    appendRun(value.slice(sourceOffset, start), sourceOffset);
+    const end = start + match[0].length;
+    if (/^\p{Format}/u.test(match[0])) {
+      extendPrevious(end);
+    } else {
+      if (pendingWhitespace) pendingWhitespace.end = end;
+      else pendingWhitespace = { start, end };
+    }
+    sourceOffset = end;
   }
+  appendRun(value.slice(sourceOffset), sourceOffset);
   flushWhitespace();
-  return { value: output, starts, ends };
+  return { value: output, runs };
 };
 
 export const foldValue = (value: string, options: ContainsSearchOptions, locale?: string): string =>
   foldSearchText(value, options, locale).value;
+
+const sourceOffset = (runs: SourceRun[], index: number, end: boolean): number => {
+  let low = 0;
+  let high = runs.length - 1;
+  while (low < high) {
+    const middle = (low + high + 1) >> 1;
+    if (runs[middle]!.foldedStart <= index) low = middle;
+    else high = middle - 1;
+  }
+  const run = runs[low]!;
+  const offset = index - run.foldedStart;
+  if (end && offset === run.foldedLength - 1 && run.extendedEnd !== undefined) {
+    return run.extendedEnd;
+  }
+  if (!run.aligned) return run.sourceStart + (end ? run.sourceLength : 0);
+  return run.sourceStart + offset + (end ? 1 : 0);
+};
 
 export function* findContainsMatches(
   text: string,
@@ -141,9 +242,9 @@ export function* findContainsMatches(
   let index = haystack.value.indexOf(needle);
   while (index >= 0) {
     const last = index + needle.length - 1;
-    const end = haystack.ends?.[last] ?? last + 1;
+    const end = haystack.runs ? sourceOffset(haystack.runs, last, true) : last + 1;
     if (!options.matchDiacritics || !endsBeforeCombiningMark(text, end)) {
-      yield { start: haystack.starts?.[index] ?? index, end };
+      yield { start: haystack.runs ? sourceOffset(haystack.runs, index, false) : index, end };
     }
     index = haystack.value.indexOf(needle, index + 1);
   }

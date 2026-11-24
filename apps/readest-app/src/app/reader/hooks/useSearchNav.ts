@@ -2,9 +2,17 @@ import { useCallback, useMemo } from 'react';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookProgressValue } from '@/store/readerProgressStore';
-import { createCfiLocationMatcher } from '@/utils/cfi';
+import { createCfiLocationMatcher, getCfiSpinePrefix } from '@/utils/cfi';
 import { clearViewSearchHighlights } from '@/utils/searchConfig';
 import { flattenSearchResults } from '../components/sidebar/SearchResultsNav';
+
+const getComparableSpinePrefix = (cfi: string) => {
+  const prefix = getCfiSpinePrefix(cfi);
+  // A bang inside an ID assertion makes the generic prefix helper stop early.
+  // An unclosed assertion is therefore a cue to use the full CFI matcher.
+  if (!prefix || prefix.lastIndexOf('[') > prefix.lastIndexOf(']')) return null;
+  return prefix.replace(/\[[^\]]*\]/g, '');
+};
 
 export function useSearchNav(bookKey: string) {
   const getView = useReaderStore((s) => s.getView);
@@ -46,12 +54,16 @@ export function useSearchNav(bookKey: string) {
     if (!flattenedResults.length || !currentLocation) return { firstIndex: -1, lastIndex: -1 };
 
     const matches = createCfiLocationMatcher(currentLocation);
+    const currentSpine = getComparableSpinePrefix(currentLocation);
     let firstIndex = -1;
     let lastIndex = -1;
 
     for (let i = 0; i < flattenedResults.length; i++) {
       const result = flattenedResults[i];
-      if (result && matches(result.cfi)) {
+      if (!result) continue;
+      const resultSpine = getComparableSpinePrefix(result.cfi);
+      if (currentSpine && resultSpine && resultSpine !== currentSpine) continue;
+      if (matches(result.cfi)) {
         if (firstIndex === -1) firstIndex = i;
         lastIndex = i;
       }

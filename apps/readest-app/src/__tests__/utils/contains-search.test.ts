@@ -1,9 +1,57 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { findContainsMatches } from '@/utils/containsSearch';
+import { findContainsMatches, foldValue } from '@/utils/containsSearch';
 
 describe('findContainsMatches', () => {
+  it('folds prose in bulk instead of lowercase-folding every source character', () => {
+    const lowercase = vi.spyOn(String.prototype, 'toLocaleLowerCase');
+    try {
+      expect(foldValue('Alpha  beta', { matchCase: false, matchDiacritics: false }, 'en')).toBe(
+        'alpha beta',
+      );
+      // Whole-value folding plus a bounded number of runs; never one call per character.
+      expect(lowercase.mock.calls.length).toBeLessThanOrEqual(4);
+
+      lowercase.mockClear();
+      expect([
+        ...findContainsMatches('Alpha  beta', 'alpha', {
+          matchCase: false,
+          matchDiacritics: false,
+        }),
+      ]).toEqual([{ start: 0, end: 5 }]);
+      expect(lowercase.mock.calls.length).toBeLessThanOrEqual(4);
+    } finally {
+      lowercase.mockRestore();
+    }
+  });
+
+  it('preserves per-codepoint ends when formatting follows an expanding lowercase fold', () => {
+    expect([
+      ...findContainsMatches('aİ\u200Bx', 'ai', { matchCase: false, matchDiacritics: true }, 'en'),
+    ]).toEqual([{ start: 0, end: 2 }]);
+  });
+
+  it('treats FEFF as a format character rather than whitespace', () => {
+    expect([
+      ...findContainsMatches('a\uFEFFb', 'ab', { matchCase: false, matchDiacritics: false }),
+    ]).toEqual([{ start: 0, end: 3 }]);
+  });
+
+  it('uses the same locale fallback for folding and source mapping', () => {
+    expect([
+      ...findContainsMatches('A  B', 'a', { matchCase: false, matchDiacritics: false }, 'en_US'),
+    ]).toEqual([{ start: 0, end: 1 }]);
+  });
+
+  it('keeps index folding consistent with context-aware final sigma matching', () => {
+    expect(foldValue('AΣʰ  x', { matchCase: false, matchDiacritics: false }, 'el')).toBe('aσʰ x');
+  });
+
+  it('keeps locale-specific index folding consistent with source mapping', () => {
+    expect(foldValue('I\u0307  X', { matchCase: false, matchDiacritics: false }, 'tr')).toBe('ı x');
+  });
+
   it('preserves UTF-16 source offsets while applying case and diacritic options independently', () => {
     const text = 'Cafe\u0301 cafe CAFÉ';
 

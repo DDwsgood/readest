@@ -40,6 +40,7 @@ const SEARCH_HISTORY_KEY = 'search-history';
 const LEGACY_SEARCH_CACHE_DIR = 'search';
 let legacySearchCacheCleared = false;
 const MAX_SEARCH_HISTORY = 10;
+const SEARCH_PROGRESS_INTERVAL = 100;
 
 interface SearchBarProps {
   isVisible: boolean;
@@ -363,6 +364,7 @@ const SearchBar: React.FC<SearchBarProps> = ({ isVisible, bookKey, onHideSearchB
       clearViewSearchHighlights(getView(bookKey));
 
       const results: BookSearchResult[] = [];
+      let lastProgressUpdate = 0;
       const stopped = () =>
         !isMountedRef.current ||
         !isVisibleRef.current ||
@@ -383,7 +385,11 @@ const SearchBar: React.FC<SearchBarProps> = ({ isVisible, bookKey, onHideSearchB
         })) {
           if (stopped()) return;
           if (event.type === 'progress') {
-            setSearchProgress(bookKey, event.bookProgress);
+            const now = performance.now();
+            if (event.bookProgress === 1 || now - lastProgressUpdate >= SEARCH_PROGRESS_INTERVAL) {
+              lastProgressUpdate = now;
+              setSearchProgress(bookKey, event.bookProgress);
+            }
           } else if (event.type === 'result') {
             // Results carry text-offset locators; resolve them to CFIs section
             // by section so the list and in-page highlights can address the DOM.
@@ -447,11 +453,12 @@ const SearchBar: React.FC<SearchBarProps> = ({ isVisible, bookKey, onHideSearchB
             });
             console.log('search done');
           }
-          await new Promise((resolve) => setTimeout(resolve, 0));
         }
 
-        // Replay the resolved matches through the view so every CFI gets its
-        // search highlight; the view does no searching of its own here.
+        // Let the completed, virtualized list paint before replaying thousands
+        // of highlights through the view. The search service already yields
+        // between busy slices, so individual events do not need another timer.
+        await new Promise((resolve) => setTimeout(resolve, 0));
         if (!stopped() && results.length > 0) {
           await replayViewHighlights(term, searchConfig, results, targetKey, controller.signal);
         }

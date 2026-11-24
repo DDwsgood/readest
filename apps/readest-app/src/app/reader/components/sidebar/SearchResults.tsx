@@ -47,7 +47,12 @@ export const getVisibleCfiSet = (
     if (content.index == null || content.index === primaryIndex) continue;
     const frame = content.doc?.defaultView?.frameElement?.getBoundingClientRect();
     if (!frame) continue;
-    if (frame.right > container.left && frame.left < container.right) {
+    if (
+      frame.right > container.left &&
+      frame.left < container.right &&
+      frame.bottom > container.top &&
+      frame.top < container.bottom
+    ) {
       onScreenSections.add(content.index);
     }
   }
