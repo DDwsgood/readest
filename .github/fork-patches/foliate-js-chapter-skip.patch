@@ -1,0 +1,53 @@
+diff --git a/paginator.js b/paginator.js
+index b804013..d27af7c 100644
+--- a/paginator.js
++++ b/paginator.js
+@@ -769,6 +769,7 @@ class View {
+     #layout = {}
+     #contentPages = 0
+     #bgImageSize = null
++    #settleLoad = null
+     fontReady = Promise.resolve()
+     constructor({ container, onExpand }) {
+         this.container = container
+@@ -816,6 +817,7 @@ class View {
+     async load(src, data, afterLoad, beforeRender, waitForIdle) {
+         if (typeof src !== 'string') throw new Error(`${src} is not string`)
+         return new Promise(resolve => {
++            this.#settleLoad = resolve
+             this.#iframe.addEventListener('load', async () => {
+                 // A background fetch can finish after a swipe has started.
+                 // Defer its style/layout work, not just the start of preloading.
+@@ -1468,6 +1470,9 @@ class View {
+     destroy() {
+         if (this.document?.body) this.#observer.unobserve(this.document.body)
+         this.destroyLoupe()
++        // A removed iframe never fires `load`. Settle the wait for it, or a
++        // preload dropped mid-load blocks the page turns that await it.
++        this.#settleLoad?.()
+     }
+ }
+ 
+@@ -4462,12 +4467,17 @@ export class Paginator extends HTMLElement {
+         if (this.#locked) return
+         this.#locked = true
+         const prev = dir === -1
+-        const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
+-        if (shouldGo) {
++        const turn = () => prev ? this.#scrollPrev(distance) : this.#scrollNext(distance)
++        let shouldGo = await turn()
++        if (shouldGo && this.#fillPromise) {
+             // Wait for any in-progress background pre-loading to complete —
+-            // it may already be loading the section we need, so awaiting
+-            // it lets #goTo reuse the view instead of loading from scratch
+-            if (this.#fillPromise) await this.#fillPromise
++            // it may already be loading the section we need. Then turn again:
++            // the sections it loaded follow the page the turn ran out of, and
++            // stepping past them from the new last view would skip them.
++            await this.#fillPromise
++            shouldGo = await turn()
++        }
++        if (shouldGo) {
+             const sorted = this.#sortedViews
+             const edgeIndex = prev
+                 ? sorted[0]?.[0] ?? this.#primaryIndex
